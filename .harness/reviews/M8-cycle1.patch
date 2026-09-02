@@ -1,0 +1,94 @@
+diff --git a/.harness/architecture.md b/.harness/architecture.md
+index 3a38546..5de84da 100644
+--- a/.harness/architecture.md
++++ b/.harness/architecture.md
+@@ -336,3 +336,15 @@ C9's `resumeIfInterrupted` returns a `ResumeResult` that the Interfaces section
+ the `C10 -> C9` interface having listed the method but not its shape. Old persisted records
+ lacking the field load with `partialText: ""` rather than failing.
+ Material: no
++
++**M8 — C9's `C10 → C9` surface is wider than the interface as written.** The Interfaces
++section's `C10 → C9` line lists only `send`, `cancel`, `resumeIfInterrupted`, and a
++subscription for streamed deltas and status changes. C9 as built also exposes
++`createConversation({ profileId, title? }): Promise<Conversation>`. This is an entry point
++over responsibilities C9 already owns: C9 already depends on C7 (whose documented `C9 → C7`
++interface includes `createSession()`) and on C8 (whose documented `C9 → C8` interface
++covers conversation persistence). No component boundary moves, no technology choice
++changes, and no responsibility changes owner: C8 still owns the persisted conversations
++and has no knowledge of the api client. Recorded here because the written interface no
++longer matches what exists.
++Material: no
+diff --git a/test/web/session-coordinator.test.ts b/test/web/session-coordinator.test.ts
+index 53bbfea..d4d25fd 100644
+--- a/test/web/session-coordinator.test.ts
++++ b/test/web/session-coordinator.test.ts
+@@ -137,6 +137,69 @@ describe("SessionCoordinator", () => {
+ 
+         expect(createSessionCalls).toBe(1);
+       });
++
++      it("creates a sessionless conversation when createSession rejects, then provisions it lazily on send(), resulting in exactly one successful call overall", async () => {
++        let createSessionCalls = 0;
++        let createSessionAttempts = 0;
++        const sessionCreationRejectionError = new Error("Session creation failed");
++
++        fakeApiClient.createSession = async () => {
++          createSessionAttempts++;
++          if (createSessionAttempts === 1) {
++            throw sessionCreationRejectionError;
++          }
++          // Subsequent calls succeed
++          createSessionCalls++;
++          return `session-provisioned-on-retry-${createSessionCalls}`;
++        };
++
++        // Step 1: createConversation rejects, but conversation is still persisted with sessionId: null
++        let createConversationError: unknown;
++        let conversationIdFromError: string | null = null;
++        try {
++          await coordinator.createConversation({ profileId: "prof-123" });
++          expect.unreachable("createConversation should have rejected");
++        } catch (e) {
++          createConversationError = e;
++        }
++
++        expect(createConversationError).toBe(sessionCreationRejectionError);
++
++        // Step 2: Verify the conversation exists in the store with sessionId: null
++        // We need to get the conversation id somehow. Since createConversation failed,
++        // we can get it from loadConversations
++        const conversations = conversationStore.loadConversations();
++        expect(conversations).toHaveLength(1);
++
++        const sessionlessConversation = conversations[0];
++        expect(sessionlessConversation).toBeDefined();
++        expect(sessionlessConversation?.sessionId).toBeNull();
++        expect(sessionlessConversation?.profileId).toBe("prof-123");
++
++        // Step 3: Verify we can retrieve it via getConversation too
++        const retrieved = conversationStore.getConversation(sessionlessConversation!.id);
++        expect(retrieved).not.toBeNull();
++        expect(retrieved?.sessionId).toBeNull();
++
++        // Step 4: Call send() on that conversation - it should succeed by provisioning the session
++        const result = await coordinator.send(
++          sessionlessConversation!.id,
++          "Hello world"
++        );
++        expect(result).toBeDefined();
++        expect(result.status).toBe("complete");
++
++        // Step 5: Verify that we have exactly 1 successful createSession() call overall
++        // (the one during send() - the first one during createConversation failed)
++        expect(createSessionCalls).toBe(1);
++        expect(createSessionAttempts).toBe(2); // First failed, second succeeded
++
++        // Step 6: Verify the conversation now has a sessionId
++        const updatedConversation = conversationStore.getConversation(
++          sessionlessConversation!.id
++        );
++        expect(updatedConversation?.sessionId).toBe("session-provisioned-on-retry-1");
++      });
+     });
+ 
+     it("sends a prompt and receives a result", async () => {

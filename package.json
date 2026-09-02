@@ -1,0 +1,31 @@
+{
+  "name": "phone-to-local-model",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "icons": "bun run scripts/generate-icons.ts",
+    "test": "bun test",
+    "serve": "bun run src/host/pwa-server.ts",
+    "install:launch-agent": "bun run src/host/launch-agent.ts",
+    "pair": "bun run src/host/pair.ts",
+    "proof:m2": "bun run src/host/m2-proof.ts",
+    "proof:m3": "bun run src/host/m3-proof.ts",
+    "proof:m4": "bun run src/host/m4-proof.ts",
+    "proof:m5": "bun run src/host/m5-proof.ts",
+    "proof:m6": "bun run src/host/m6-proof.ts",
+    "proof:m7": "bun run src/host/m7-proof.ts",
+    "proof:m8": "bun run src/host/m8-proof.ts",
+    "proof:m10": "bun run src/host/m10-proof.ts",
+    "proof:m11": "bun run src/host/m11-proof.ts",
+    "proof:m12": "bun run src/host/m12-proof.ts",
+    "proof:m12a": "bun run src/host/m12a-proof.ts",
+    "proof:m12b": "bun run src/host/m12b-proof.ts",
+    "proof:m13": "bun run src/host/m13-proof.ts",
+    "proof:m15": "bun run src/host/m15-proof.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "happy-dom": "^20.12.0"
+  }
+}

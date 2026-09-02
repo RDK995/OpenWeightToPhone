@@ -1,0 +1,850 @@
+diff --git a/.harness/architecture.md b/.harness/architecture.md
+index 2f8bb86..b3cf65e 100644
+--- a/.harness/architecture.md
++++ b/.harness/architecture.md
+@@ -438,8 +438,14 @@ folded into `dom-target.ts` because it renders **before** any conversation UI ex
+ app holds no credential and every API call would `401`, so it shares none of `dom-target.ts`'s
+ state, actions map, or controller. The DOM-free split the M9 entry describes is **unchanged**:
+ `view-model.ts`, `actions.ts` and `mount.ts` remain DOM-free and their structural tests
+-still enforce it. The agreed diagram edge `C10 --> C5` labelled "pairing state" already covers
+-the UI reaching the credential store, so **no new edge and no new dependency** is introduced
+-— C10's `Depends on: C5, C8, C9` is unchanged. No boundary moves and no responsibility
++still enforce it. **No new edge and no new dependency** is introduced — C10's
++`Depends on: C5, C8, C9` is unchanged. `pairing-target.ts` is deliberately credential-free:
++it never imports or reaches C5, taking an `onSubmit` callback instead
++(`web/src/ui/pairing-target.ts:9-11`), so it adds no C10 edge of any kind. The component that
++does reach C5 is C12 (`web/src/main.ts`), and that C12 -> C5 wiring is already recorded in the
++M11 deviation entry above. *(Corrected in M12a-ii review cycle 1: this paragraph previously
++justified itself by citing the agreed edge `C10 --> C5` labelled "pairing state" as already
++covering the UI reaching the credential store. The conclusion was right but the citation was
++not — the new code does not use that edge.)* No boundary moves and no responsibility
+ changes owner.
+ Material: no
+diff --git a/.harness/milestones.md b/.harness/milestones.md
+index 890effe..370f9be 100644
+--- a/.harness/milestones.md
++++ b/.harness/milestones.md
+@@ -1598,8 +1598,16 @@ unpaired → paired → unauthorized → unpaired state machine and replaced `bo
+ browser entry guard. **Two `Material: no` deviations recorded** in `.harness/architecture.md`
+ under `## Deviations` (task T5) — one for C5's responsibility line being narrower than the code,
+ one for C10 now having two DOM-touching modules. No component boundary moved, no technology
+-choice changed, no responsibility changed owner, and the agreed edge `C10 --> C5` ("pairing
+-state") already covered the UI reaching the credential store, so no new edge was introduced.
++choice changed, no responsibility changed owner, and no new edge was introduced.
++
++**Corrected in review cycle 1** (cycle-1 OPTIONAL 5). This paragraph previously justified
++"no new edge" by claiming the agreed edge `C10 --> C5` ("pairing state") already covered the
++UI reaching the credential store. The conclusion holds but that citation was wrong, and the
++same wrong citation was in `architecture.md`'s deviation entry; both are now corrected.
++`ui/pairing-target.ts` is deliberately credential-free — it has no imports at all and takes an
++`onSubmit` callback (`web/src/ui/pairing-target.ts:9-11`), so it never reaches C5 and adds no
++C10 edge. The component that reaches C5 is **C12** (`web/src/main.ts`), and that C12 -> C5
++wiring was already recorded in the M11 deviation entry.
+ 
+ ### As-Built
+ 
+@@ -1630,11 +1638,40 @@ state") already covered the UI reaching the credential store, so no new edge was
+ task ran.
+ 
+ **Most files this milestone touches were untracked at baseline**, so a plain
+-`git diff 052db73` does not isolate the delta — the same caveat `M12a-i` recorded. The
+-two pre-existing files being modified, with their pre-implementation SHA-256 hashes:
++`git diff 052db73` does not isolate the delta — the same caveat `M12a-i` recorded.
++
++**Corrected in review cycle 1** (cycle-1 OPTIONAL 4). The previous version of this block
++listed only two modified pre-existing files, omitted `web/src/ui/dom-target.ts` entirely,
++and annotated `credential-store.ts` with a line count that contradicted the hash beside it.
++It also called every hash below "pre-implementation" when one of them was not. **Three**
++pre-existing files were modified, and each hash is now labelled with the point in the
++milestone it was taken at:
+ 
+-- `web/src/credential-store.ts` — `e8e8b44fe05f0915f15086048e04309062a4d5c66862b6cdd92a2170df5ca20a (post-T1; pre-T1 content is recoverable from the T1 diff)` (120 lines)
+-- `web/src/main.ts` — `11fd2382346febbad27f32fe2be352b28f950091759afbaa1a89499aec12a8a1` (127 lines)
++| File | SHA-256 | Taken at | Lines |
++| --- | --- | --- | --- |
++| `web/src/credential-store.ts` | `e8e8b44fe05f0915f15086048e04309062a4d5c66862b6cdd92a2170df5ca20a` | **post-T1** | 163 |
++| `web/src/main.ts` | `11fd2382346febbad27f32fe2be352b28f950091759afbaa1a89499aec12a8a1` | pre-implementation | 127 |
++| `web/src/ui/dom-target.ts` | `1e68d55700243567145fb2285579b0c618484d9bed58c64cb0b96eaa68c898b1` | **post-T2** | 319 |
++
++Notes, so the table is not read as claiming more than it proves:
++
++- `credential-store.ts`'s recorded hash is **post-T1, not pre-implementation** — the
++  original record said so in a parenthetical but then described the whole list as
++  pre-implementation hashes. Its pre-T1 content is recoverable from the T1 diff. Its line
++  count at the recorded hash is **163**, not the 120 previously written here; 120 was the
++  pre-T1 count and did not match the hash it was printed beside.
++- `web/src/ui/dom-target.ts` was modified by **T2** and was missing from this list. T2's
++  packet allowed it explicitly and narrowly — `Files Allowed To Change` reads
++  "`web/src/ui/dom-target.ts` — **comment only**, no code change" — and the change is the
++  rewritten header comment now at lines 1-7 ("One of the two modules in `web/src/`
++  permitted to touch the DOM"). **The hash above is post-T2**: this file was untracked at
++  baseline, so its pre-T2 content is not recoverable from git and no pre-T2 hash can be
++  stated honestly. That the change was comment-only is what T2's packet *permitted*; it is
++  not independently verified here, and a reviewer wanting that guarantee should read the
++  file rather than trust this line.
++- `web/src/main.ts` was further modified in review cycle 1 by correction task C3. Its hash
++  on the settled post-cycle-1 tree is
++  `88b1c28e959acf98b87dd4fdba0349a73ab3f4ed9dda99424a44eda9c8863e5f`.
+ 
+ `web/src/ui/pairing-target.ts`, `test/web/ui/pairing-target.test.ts`,
+ `test/web/start-app.test.ts` and `src/host/m12a-proof.ts` are new in this milestone.
+@@ -1796,6 +1833,10 @@ flagged on the `M12a-i` entry. Corrected to `C10 --> C5` and re-checked: prefix
+ | `bun test` (after T3-T6, run by this orchestrator) | exit 0 — **833 pass / 0 fail**, 6136 `expect()` calls, 32 files |
+ | `bunx tsc --noEmit -p tsconfig.json` (after T6) | **exit 0 — zero errors** |
+ | `bun run proof:m12a` (live harness, T4) | exit 0 — 3 profiles returned; corrupted token rejected `401 unauthorized` |
++| `bun test` (**after review cycle 1**, run by this orchestrator) | exit 0 — **837 pass / 0 fail**, 6161 `expect()` calls, 32 files |
++| `bunx tsc --noEmit -p tsconfig.json` (after cycle 1) | **exit 0** |
++| `bun run build` (after cycle 1) | **exit 0** |
++| `bun run proof:m12a` (live harness, after cycle 1) | **exit 0** — all 6 criteria PASS, token-leak guard clean |
+ 
+ +40 tests over the milestone (793 → 833), no regressions. The final `bun test` and `tsc` runs
+ above were executed by this orchestrator against the settled tree, **after** every worker and
+@@ -1818,8 +1859,113 @@ Criteria 1-5 are met by T1-T3, criterion 6 by T4. **Criterion 7 is a human attes
+ 
+ ### Review
+ 
++#### Cycle 1 — CHANGES REQUIRED, corrections applied
++
++Report: `.harness/reviews/M12a-ii-cycle1.md`. Reviewer tier Top (`opus`), scope the whole
++milestone. Verdict **CHANGES REQUIRED**: 1 IMPORTANT (criterion 2 graded FAIL) and
++4 OPTIONALs. Criteria 1, 3, 4, 5 and 6 passed with detectors the reviewer re-ran and
++confirmed bite; criterion 7 is PENDING-HUMAN and remains unchecked.
++
++**Pre-correction snapshot:** `c8bfe6ee80519ee6c6b66c156fddca2643b1ed21`
++**Post-correction snapshot:** `0a55d78e5ac68cc751ef269c623e96ef39e4fe69`
++**Correction diff:** `.harness/reviews/M12a-ii-cycle1.patch`
++
++Both snapshots are `git commit-tree` objects capturing tracked and untracked work alike —
++necessary because most of this milestone's files were untracked at baseline, so no diff
++against a ref isolates the corrections. They are unreachable from any branch and will not
++survive `git gc --prune=now`; the patch file is the durable artefact.
++
++**All 5 findings resolved.** Correction tasks, tier, reason above Cheap, and outcome:
++
++| Finding | Task | Tier | Reason above Cheap | Outcome |
++| --- | --- | --- | --- | --- |
++| IMPORTANT 1 — criterion 2's bare-token half undefended | C1 | Cheap | — | attempt 1, **PASS — independently verified** |
++| OPTIONAL 1 — bundle entry path untested | C2 | Cheap | — | attempt 1, **PASS — independently verified** |
++| OPTIONAL 2 — a `bootstrap()` throw leaves a blank app | C3 | **Mid** | not low risk | attempt 3, **PASS — independently verified** |
++| OPTIONAL 4 — `### Baseline` incomplete/inconsistent | — | orchestrator record correction | — | applied |
++| OPTIONAL 5 — misquoted `C10 --> C5` citation | — | orchestrator record correction | — | applied |
++
++Packets: `.harness/tasks/M12a-ii-C1.md`, `-C2.md`, `-C3.md`.
++
++**C1 — the IMPORTANT.** Added one test to `test/web/start-app.test.ts` pairing with the bare
++token `"tok-bare-1234"` through `startApp`, asserting the stored credential equals
++`{ baseUrl: ORIGIN, token: "tok-bare-1234" }` — the whole object, so `baseUrl` is genuinely
++checked. **This orchestrator re-ran the reviewer's mutation itself**: replacing
++`location.origin` in `onSubmit` with `"https://WRONG.example"` produced `14 pass / 1 fail`,
++failing on exactly the new test with `"baseUrl": "https://WRONG.example"` against
++`"https://mac.example.test"`. That *only* the new test fails confirms it was the sole missing
++detector, which was precisely the finding. `web/src/main.ts` was then restored and confirmed
++byte-identical by SHA-256 (`24743340…`).
++
++**C2 — the bundle entry path.** Added a test to `test/web/bundle-fragment.test.ts` importing
++the **built** `web/dist/main.js` and calling its exported `startApp` with a happy-dom root,
++asserting `[data-testid=pairing-input]`, `[data-testid=pairing-submit]` and the heading text
++render. Detector re-run by this orchestrator: deleting `section.appendChild(input)` from
++`pairing-target.ts` gave `4 pass / 1 fail` on exactly the new test; the file was restored and
++confirmed at `e58f0e71…`. `happy-dom` appears **0** times in both `web/dist/main.js` and
++`web/dist/sw.js`, so the bundle-purity invariant is intact.
++
++**C3 — the blank-app hazard (Mid).** `enterPaired()` released the pairing view before calling
++`bootstrap()`, so a synchronous throw left the root empty with no view and no control — and
++because the credential had already been persisted, a relaunch re-entered the same throw,
++permanently. On a home-screen app with no address bar that is unrecoverable. `enterPaired()`
++now returns `PairingSubmitResult`, and on catch clears the credential, falls back to
++`enterUnpaired(message)` and reports failure; `onSubmit` forwards that result instead of
++unconditionally returning `{ ok: true }`. The initial pre-seeded-credential branch gets the
++same protection because it is the same function. `bootstrap()`'s name, signature and behaviour
++are unchanged and `BootstrapDeps` gained no field — the tests inject a throwing `createTarget`
++through the **existing** dep, so no test-only seam was added to production code.
++
++**Why C3's verification is more than a green suite.** This orchestrator reverted *only*
++`web/src/main.ts` to its pre-C3 content and re-ran the focused file: exactly the 2 new tests
++failed with the throw escaping, and all 15 pre-existing tests still passed. The reverted file
++hashed to `24743340…`, the exact pre-C3 hash — which proves C3's only change to `main.ts` is
++the guard, and that the guard is the thing the new tests detect. The `start-app.test.ts` diff
++is **63 insertions, 0 deletions**, so no existing test was touched.
++
++**Verification was performed by this orchestrator rather than by a `harness:verifier`, and
++that is a deviation worth recording.** A verifier was invoked for C1 and reported that it
++could not perform the mutation step at all: its sandbox blocked file edits. It also reported
++`831 pass / 3 fail` where the worker claimed `834 / 0`. **That discrepancy was investigated
++and is not a regression** — the 3 failures are in `test/host/pair.test.ts`, which writes to
++`/tmp`, calls `chmodSync`, and spawns subprocesses via `execSync`/`spawnSync`: exactly the
++operations its sandbox was refusing. `pair.test.ts` passes 20/20 in isolation, and the full
++suite ran **834/0 on three consecutive runs** for this orchestrator. Since the mutation
++re-runs are the only part of this verification worth having, they were performed directly.
++**Follow-up recorded below:** the verifier subagent cannot mutate files in this environment,
++which silently degrades it from an independent checker to a test-runner.
++
++#### Files the corrections changed
++
++Source and test:
++
++- `web/src/main.ts` — C3 only. SHA-256 now
++  `88b1c28e959acf98b87dd4fdba0349a73ab3f4ed9dda99424a44eda9c8863e5f` (was `24743340…`).
++- `test/web/start-app.test.ts` — C1 (+25) and C3 (+63). 88 insertions, 0 deletions.
++- `test/web/bundle-fragment.test.ts` — C2 only. 45 insertions, 0 deletions.
++
++Harness record (the two record-correction findings, plus this cycle's own bookkeeping):
++
++- `.harness/milestones.md` — `### Architecture`, `### Baseline`, `### Validation`,
++  `### Review`, `### Review Cycles`, `### Follow-ups`.
++- `.harness/architecture.md` — **`## Deviations` only.** `## Status` is still `AGREED`.
++- `.harness/tasks/M12a-ii-C1.md`, `-C2.md`, `-C3.md` — new correction packets.
++
++**Did any correction touch a file no cycle-1 finding named? One, and only one.** Every code
++file changed was named by a finding: `web/src/main.ts` by IMPORTANT 1's and OPTIONAL 2's
++evidence, `test/web/start-app.test.ts` by IMPORTANT 1's suggested correction,
++`test/web/bundle-fragment.test.ts` by OPTIONAL 1's, and both harness records by OPTIONAL 4's
++and OPTIONAL 5's. The exception is **the `### Architecture` paragraph of this milestone entry
++in `.harness/milestones.md`**: OPTIONAL 5 named only `architecture.md`, but the identical
++misquoted `C10 --> C5` citation was also present here, and correcting one while leaving the
++other would have left the record self-contradicting. **That edit is record-only and touches
++no code.** No production or test file outside the findings' named set was modified.
++
++`web/dist/**` is build output, regenerated by `bun run build`; it is not hand-edited and is
++git-ignored.
++
+ ### Review Cycles
+-0
++1
+ 
+ ### Follow-ups
+ 
+@@ -1834,13 +1980,12 @@ Criteria 1-5 are met by T1-T3, criterion 6 by T4. **Criterion 7 is a human attes
+   AirDrops or messages to themselves carries the bearer token in plain text. That is the
+   deliberate, explicitly opt-in trade `M12a-i` recorded against FR1. Worth deleting the
+   message afterwards; not a defect.
+-- **`doc.title` leak check is untested by T2's mutation.** T2's worker honestly reported
+-  that its injected mutation (setting the input's `value` attribute) does not exercise the
+-  `doc.title` assertion, so that one assertion has not been shown to bite. It guards a
+-  real and different leak class, so it should stay — but if a later phase wants it
+-  proven, the mutation is to write the token into `document.title` and confirm the test
+-  goes red. Recorded rather than fixed, because it is a strengthening of evidence, not a
+-  defect in behaviour.
++- **RESOLVED (cycle-1 review). The `doc.title` leak check is proven to bite.** T2's worker
++  had honestly reported that its injected mutation (setting the input's `value` attribute)
++  did not exercise the `doc.title` assertion, leaving that one assertion unproven. **The
++  cycle-1 reviewer ran the missing mutation**: it added `doc.title = trimmedValue;` to the
++  click handler in `pairing-target.ts` and observed **both AC6 leak tests go red**. The
++  assertion is a real detector. Closed — no further work.
+ - **Do not let the pairing view become a second source of truth for credential handling.**
+   `adoptCredentialFromFragment` already parses `#t=`, validates, stores and clears. The pasted-URL
+   path should reuse that parsing rather than reimplement it, or the two will drift.
+@@ -1878,6 +2023,30 @@ Criteria 1-5 are met by T1-T3, criterion 6 by T4. **Criterion 7 is a human attes
+   milestones: consistent first-rung passes above Cheap are the signal that routing has drifted
+   upward, and nothing else in this system reports it.
+ 
++- **The `harness:verifier` subagent cannot edit files in this environment, and fails silently
++  into a weaker role.** Invoked for correction task C1, it reported that its sandbox blocked
++  every file-editing route (`sed`, Python writes, the edit tools) and so it could not perform
++  the mutation step — which for a "prove the detector bites" task is the entire job. It
++  returned a partial result rather than a failure. It also reported `831 pass / 3 fail`
++  against `test/host/pair.test.ts` where the true figure is `834 / 0`, because that file
++  writes to `/tmp`, calls `chmodSync` and spawns subprocesses — the same operations its
++  sandbox refused. **Both symptoms are environmental, not defects in the code**, but together
++  they mean a verifier's report in this project currently cannot be trusted for either
++  mutation evidence or full-suite counts. Cycle-1 verification was therefore done directly by
++  the orchestrator. Worth resolving before the next milestone: either grant the verifier write
++  access in its sandbox, or stop routing mutation-proof work to it and record that the
++  orchestrator owns that step. **This is a harness-configuration issue, not a project defect,
++  so it was recorded rather than fixed here.**
++
++- **`test/host/pair.test.ts` is environment-sensitive and will fail under a restricted
++  sandbox.** It `mkdtempSync`es under `/tmp`, `writeFileSync`s a token fixture, `chmodSync`es
++  it for a permissions test, mutates the process-global `process.env.OPENWEIGHT_HARNESS_TOKEN_FILE`,
++  and shells out with `execSync`/`spawnSync`. That is legitimate for what it tests, but it
++  means "the suite is green" is not a portable claim, and any agent running it without
++  filesystem and subprocess permissions will report false failures. Worth a note in the test
++  file itself so the next reader does not chase a phantom regression. Not this milestone's
++  business to change.
++
+ 
+ ## M12b — Changing a conversation's profile actually changes it
+ 
+diff --git a/.harness/tasks/M12a-ii-C1.md b/.harness/tasks/M12a-ii-C1.md
+new file mode 100644
+index 0000000..de183c9
+--- /dev/null
++++ b/.harness/tasks/M12a-ii-C1.md
+@@ -0,0 +1,97 @@
++TASK
++
++Correction task for M12a-ii cycle-1 review finding **IMPORTANT 1**.
++Full finding: `/Users/ryankenny/Projects/phoneToLocalModel/.harness/reviews/M12a-ii-cycle1.md`,
++the first fenced `Severity: IMPORTANT` block. Read it there — it names the exact
++mutation that must go red.
++
++Routing: **Cheap**. No reason above Cheap: it is clearly specified (the reviewer
++wrote the suggested correction), bounded (one existing test file), low risk
++(test-only, no production code), and easily verified (a named source mutation
++must turn it red).
++
++Goal:
++Add one test to `test/web/start-app.test.ts` that drives a **bare token** (not a
++full pairing URL) through `startApp` and proves `startApp` supplies the app's own
++origin as `currentOrigin`. Today every `startApp` test pastes a full URL, whose
++own origin wins and masks the argument at `web/src/main.ts:236`, so mutating that
++line to a wrong-origin literal leaves the whole suite green.
++
++Relevant Requirements:
++M12a-ii acceptance criterion 2 (derived from FR1): "Pasting a full pairing URL
++(`https://<host>/app/#t=<token>`) stores the token and that origin; pasting a bare
++token stores it against the current origin. Both leave the app paired in its own
++storage container."
++
++Acceptance Criteria:
++- AC1. A new `it(...)` in the existing `describe("startApp", ...)` block in
++  `test/web/start-app.test.ts`, placed with the other `AC4:` tests (after the
++  test at line 208, before the `AC5:` test at line 231), named so it is clearly
++  the bare-token case.
++- AC2. It starts from the **unpaired** state: `startApp(root, { storage,
++  location: createLocation(""), createApiClient: api.factory })` with a fresh
++  `createMemoryStorage()`, exactly like the existing AC4 tests.
++- AC3. It pairs with a **bare token** — `handle.submitPairing("tok-bare-1234")`,
++  or by setting that value on `[data-testid=pairing-input]` and clicking
++  `[data-testid=pairing-submit]`.
++- AC4. It asserts `createCredentialStore(storage).getCredential()` equals
++  `{ baseUrl: ORIGIN, token: "tok-bare-1234" }` — the whole object, so the
++  `baseUrl` is genuinely checked and not just the token.
++- AC5. It asserts `handle.paired` is `true`, that `[data-testid=prompt-input]`
++  is present and `[data-testid=pairing]` is absent (the app really is paired,
++  not merely storing a credential).
++- AC6. **The detector must bite, and you must prove it.** Temporarily replace
++  `location.origin` on `web/src/main.ts:236` with the literal
++  `"https://WRONG.example"`, run `bun test test/web/start-app.test.ts`, and
++  confirm your new test **FAILS**. Then restore `web/src/main.ts` and confirm
++  its SHA-256 is exactly
++  `24743340e2cf3763f5867769da1808dd0033bcf5961b2001adca6668dc3b8bbe`
++  (`shasum -a 256 web/src/main.ts`). Report both the failing output and the
++  restored hash. A restore you did not verify by hash is not a restore.
++- AC7. No existing test is renamed, removed, weakened or otherwise modified.
++  The file gains exactly one `it(...)` and nothing else. `bun test` goes from
++  833 pass to 834 pass, 0 fail.
++
++Relevant Files:
++- `test/web/start-app.test.ts` — read it in full. `ORIGIN`, `createTestWindow`,
++  `createLocation`, `switchableApiClient`, `q`, `click`, `count` and
++  `createCredentialStore` are already imported/defined at the top; reuse them,
++  do not re-declare them.
++- `web/src/main.ts` lines 232-245 — `onSubmit`, the code under test. Read only;
++  the only edit permitted here is the temporary AC6 mutation, which you must
++  revert.
++- `web/src/credential-store.ts` lines 122-163 — `adoptCredentialFromPastedText`,
++  for the bare-token branch's behaviour. Read only.
++
++Files Allowed To Change:
++- `test/web/start-app.test.ts`
++
++(`web/src/main.ts` may be mutated **temporarily** for AC6 and must be returned to
++the hash above. It is not a permitted change.)
++
++Constraints:
++- Follow existing repository patterns — match the style of the neighbouring AC4
++  tests exactly.
++- Do not change unrelated behaviour. Do not touch production code.
++- Do not introduce dependencies.
++- Do not weaken tests.
++- Do not add any test beyond the one this packet asks for. If you notice
++  something else worth testing, put it under `Unresolved Issues`.
++- Never run `git stash`, `git checkout --`, `git restore`, `git reset --hard`
++  or `git clean`. You share this worktree with the orchestrator and other
++  workers. To revert your AC6 mutation, edit that one line back.
++
++Tests:
++- `bun test test/web/start-app.test.ts` (focused)
++- `bun test` (full suite — must be 834 pass / 0 fail)
++- `bunx tsc --noEmit -p tsconfig.json` (must be exit 0 — this repository
++  type-checks, and `bun test` will NOT catch a type error. Bun matchers take
++  exactly one argument: `expect(x).toBe(y, "message")` is a TS2554 error that
++  passes at runtime. Do not write one.)
++
++Return:
++- Summary
++- Files changed
++- Tests run
++- Test result
++- Unresolved issues
+diff --git a/.harness/tasks/M12a-ii-C2.md b/.harness/tasks/M12a-ii-C2.md
+new file mode 100644
+index 0000000..777bd4c
+--- /dev/null
++++ b/.harness/tasks/M12a-ii-C2.md
+@@ -0,0 +1,120 @@
++TASK
++
++Correction task for M12a-ii cycle-1 review finding **OPTIONAL 1** (the bundle
++entry-path finding). Full finding:
++`/Users/ryankenny/Projects/phoneToLocalModel/.harness/reviews/M12a-ii-cycle1.md`,
++the first fenced `Severity: OPTIONAL` block ("No test proves the shipped bundle's
++entry path renders the pairing view"). Read it there.
++
++Routing: **Cheap**. No reason above Cheap: clearly specified (the reviewer wrote
++the suggested correction), bounded (one existing test file), low risk (test-only),
++easily verified (`bun test` plus a named mutation).
++
++Goal:
++Add one test to `test/web/bundle-fragment.test.ts` that imports the **built
++bundle** (`web/dist/main.js`) and calls its exported `startApp`, asserting the
++pairing view renders. The device runs the bundle, not the source; today both
++bundle tests exercise the exported `bootstrap` only, so nothing would catch
++`startApp` being lost on the way to `web/dist/main.js` — which is exactly the
++defect class `bundle-fragment.test.ts` was created for in M11.
++
++Relevant Requirements:
++M12a-ii acceptance criterion 1 (derived from FR1, FR2): "Launched with no stored
++credential, the app renders a pairing view with an input for a pairing URL or bare
++token ... The assertion must fail if the pairing view is removed." This correction
++extends that guarantee from the source to the shipped artefact.
++
++Acceptance Criteria:
++- AC1. A new `it(...)` inside the existing `describe("bundle-fragment", ...)`
++  block in `test/web/bundle-fragment.test.ts`, added after the existing
++  behavioural test. It must use the existing `importBuiltBundle()` helper (which
++  already cache-busts) and rely on the existing `beforeAll` that runs `build()`.
++- AC2. It asserts `typeof mod.startApp === "function"` — i.e. the export survived
++  bundling.
++- AC3. It calls `mod.startApp(root, { storage, location, createApiClient })`
++  where:
++  - `root` is a **real DOM element**. This test file runs with **no `document`
++    global** (its first test asserts `typeof document === "undefined"`), so you
++    must construct one with `happy-dom`: `import { Window } from "happy-dom"`,
++    `const win = new Window(); const root = win.document.createElement("div")`.
++    Do **not** introduce a global `document`, and do not disturb the existing
++    `it("runs with no document global, ...")` test — it must still pass.
++  - `storage` is `createMemoryStorage()` (already imported).
++  - `location` is a `LocationPort` with `hash: ""` (empty — no fragment), a real
++    `origin`, and a `clearHash()` no-op. `LocationPort` is already imported.
++  - `createApiClient` is a stub like the ones already in this file, so no network
++    call is attempted.
++- AC4. It asserts the pairing view was actually rendered into `root`:
++  `root.querySelector('[data-testid="pairing-input"]')` is not null, and
++  `root.querySelector('[data-testid="pairing-submit"]')` is not null. Also
++  assert the built bundle rendered the real copy — the rendered `root`
++  text contains `"Pair this app with your Mac"`.
++- AC5. **The detector must bite, and you must prove it.** After the test is
++  green, temporarily edit `web/src/ui/pairing-target.ts` so the pairing input is
++  not rendered (e.g. delete the `section.appendChild(input);` line), re-run
++  `bun test test/web/bundle-fragment.test.ts` (the `beforeAll` rebuilds the
++  bundle, so no manual build step is needed) and confirm your new test **FAILS**.
++  Then restore `web/src/ui/pairing-target.ts` and confirm its SHA-256 is exactly
++  `e58f0e71ffece320d76247c5511334d2ff91dea7e134858f4832e7c561b6b591`
++  (`shasum -a 256 web/src/ui/pairing-target.ts`). Report the failing output and
++  the restored hash. Then run `bun run build` once so `web/dist/` is left holding
++  a bundle built from the restored source, and confirm `bun test` is fully green
++  afterwards.
++- AC6. No existing test in the file is renamed, removed, weakened or modified.
++  `bun test` gains exactly one passing test relative to whatever the count is
++  when you start, 0 fail.
++- AC7. `web/dist/` is a build output. If the build writes to it, that is expected
++  and is not a violation — but do not hand-edit anything under `web/dist/`.
++
++Relevant Files:
++- `test/web/bundle-fragment.test.ts` — read it in full. Reuse
++  `importBuiltBundle`, the `beforeAll` build, `createMemoryStorage`, the
++  `LocationPort` type, and the stub-`createApiClient` pattern already there.
++- `web/src/main.ts` lines 186-288 — `startApp`, its `BootstrapDeps` (`storage`,
++  `location`, `createTarget`, `createApiClient`, `onUnauthorized`) and the
++  browser entry guard. Read only.
++- `web/src/ui/pairing-target.ts` — the view being asserted on; gives you the
++  `data-testid` values and the heading text. Read only, except for the temporary
++  AC5 mutation which you must revert.
++- `test/web/start-app.test.ts` lines 25-45 — `createTestWindow` and
++  `createLocation`, for the happy-dom + LocationPort idiom this project uses.
++  Read only; do not import from a test file.
++
++Files Allowed To Change:
++- `test/web/bundle-fragment.test.ts`
++
++(`web/src/ui/pairing-target.ts` may be mutated **temporarily** for AC5 and must be
++returned to the hash above. It is not a permitted change. `web/dist/**` is
++regenerated by `bun run build` and is expected to differ.)
++
++Constraints:
++- Follow existing repository patterns.
++- Do not change unrelated behaviour. Do not touch production source permanently.
++- Do not introduce dependencies. `happy-dom` is already a dev dependency and is
++  used by other tests in `test/web/`.
++- **`happy-dom` must not leak into the shipped bundle.** `test/web/bundle-purity.test.ts`
++  enforces that `web/dist/main.js` contains no `happy-dom`. Import it in the test
++  file only, never from anything under `web/src/`. Confirm `bun test
++  test/web/bundle-purity.test.ts` is green before you return.
++- Do not weaken tests.
++- Do not add any test beyond the one this packet asks for.
++- Never run `git stash`, `git checkout --`, `git restore`, `git reset --hard` or
++  `git clean`. You share this worktree with the orchestrator and other workers.
++  To revert your AC5 mutation, edit that line back.
++
++Tests:
++- `bun test test/web/bundle-fragment.test.ts` (focused)
++- `bun test test/web/bundle-purity.test.ts` (the happy-dom leak guard)
++- `bun test` (full suite — 0 fail)
++- `bun run build` (exit 0)
++- `bunx tsc --noEmit -p tsconfig.json` (must be exit 0 — this repository
++  type-checks and `bun test` will NOT catch a type error. Bun matchers take
++  exactly one argument: `expect(x).toBe(y, "message")` is a TS2554 error that
++  passes at runtime. Do not write one.)
++
++Return:
++- Summary
++- Files changed
++- Tests run
++- Test result
++- Unresolved issues
+diff --git a/.harness/tasks/M12a-ii-C3.md b/.harness/tasks/M12a-ii-C3.md
+new file mode 100644
+index 0000000..4fe438b
+--- /dev/null
++++ b/.harness/tasks/M12a-ii-C3.md
+@@ -0,0 +1,141 @@
++TASK
++
++Correction task for M12a-ii cycle-1 review finding **OPTIONAL 2** (the
++blank-app-with-no-way-back finding). Full finding:
++`/Users/ryankenny/Projects/phoneToLocalModel/.harness/reviews/M12a-ii-cycle1.md`,
++the second fenced `Severity: OPTIONAL` block ("enterPaired() destroys the pairing
++view before constructing the conversation UI"). Read it there.
++
++Routing: **Mid**. Reason above Cheap: **not low risk.** This changes `startApp`'s
++unpaired/paired/unauthorized state machine — the component the milestone's
++criteria 1, 3 and 5 all rest on, and the one whose original task was routed Top.
++Getting the fallback wrong (double-mount, orphaned view, a credential cleared
++when it should not be) breaks passing criteria rather than only failing to add
++one. It is bounded and has a clear test oracle, which is why it is Mid and not Top.
++
++Goal:
++Make `enterPaired()` in `web/src/main.ts` survive a synchronous throw from
++`bootstrap()`. Today `enterPaired()` calls `releasePairingTarget()` — which
++does `section.remove()` — *before* calling `bootstrap()`. If `bootstrap()`
++throws, `mountHandle` stays null and `pairingTarget` is null, so the root is
++empty with no view and no control to touch. Because the credential was already
++persisted by `adoptCredentialFromPastedText`, a relaunch takes the same branch
++and throws again: a permanently blank installed app with no address bar. The
++reviewer could not construct a live trigger, so this is a latent hazard, not a
++live defect — fix it without changing any behaviour on the paths that work today.
++
++Relevant Requirements:
++M12a-ii acceptance criterion 5 (derived from FR9): "A token the harness rejects
++surfaces the `unauthorized` guidance and returns to the pairing view rather than
++a dead end the user cannot leave." This correction closes the same
++"dead end the user cannot leave" hole for a synchronous construction failure,
++which the criterion's existing tests do not reach.
++
++Acceptance Criteria:
++- AC1. A synchronous throw from `bootstrap()` leaves the app in the **unpaired**
++  state with the pairing view on screen and a message, not with an empty root.
++  Concretely, from the unpaired state, with a dep that makes `bootstrap` throw
++  synchronously, after pairing with a valid pairing URL:
++  - `handle.paired` is `false`
++  - `[data-testid=pairing]` is present in `root`
++  - `[data-testid=pairing-message]` has non-empty text
++  - `startApp` / `submitPairing` did **not** propagate the throw to the caller
++- AC2. The persisted credential is **cleared** in that case —
++  `createCredentialStore(storage).getCredential()` is `null` — so a relaunch does
++  not re-enter the same throwing branch. Read it back through a **fresh**
++  `createCredentialStore(storage)` over the same storage, not through a
++  captured object.
++- AC3. Relaunch safety: constructing a second `startApp` over the same storage
++  after AC2 comes up **unpaired**, showing the pairing view, and does not throw.
++- AC4. The same protection applies to the **initial** `enterPaired()` at the
++  bottom of `startApp` (the `credentialStore.getCredential() !== null` branch),
++  not only to the one reached from `onSubmit`: `startApp` with a pre-seeded
++  credential and a throwing dep must return normally, unpaired, showing the
++  pairing view — it must not throw out of `startApp`.
++- AC5. **No behaviour change on any path that works today.** Every one of the
++  16 existing tests in `test/web/start-app.test.ts` must pass **unmodified**,
++  and so must the whole suite. In particular the AC3/AC5 tests assert via
++  `recordPaintedTestIds` that the pairing view is *never painted at all* on the
++  already-paired and fragment-adoption paths — your change must not cause an
++  extra paint on a successful path.
++- AC6. `onSubmit` must not report success when the fallback fired. When
++  `enterPaired()` fails, `onSubmit` returns `{ ok: false, message: <the failure
++  message> }` rather than `{ ok: true }`. Suggested shape: have `enterPaired()`
++  return a `boolean` and have `onSubmit` branch on it. Choose your own shape if
++  a better one exists, but the observable contract above is fixed.
++- AC7. **The detector must bite, and you must prove it.** After your new tests
++  are green, temporarily remove the try/catch (restore the original
++  `enterPaired()` body), run `bun test test/web/start-app.test.ts`, and confirm
++  your new tests **FAIL** (the throw escapes). Then restore your implementation
++  and confirm the full suite is green. Report the failing output verbatim.
++- AC8. `bunx tsc --noEmit -p tsconfig.json` exits 0.
++
++How to make `bootstrap()` throw, without adding a seam:
++`enterPaired()` calls `bootstrap(root, { ...deps, storage, location,
++onUnauthorized })`, and `deps.createTarget` and `deps.createApiClient` are both
++already injectable through `BootstrapDeps` and are both invoked synchronously
++inside `bootstrap()`. Pass `createTarget: () => { throw new Error("boom"); }` (or
++the equivalent for `createApiClient`) through `startApp`'s deps. **Do not add a
++new injection point, a new dep field, or any test-only hook to production code.**
++Read `bootstrap()` first to confirm which of the two throws synchronously before
++`mountHandle` would be assigned, and use that one.
++
++Relevant Files:
++- `web/src/main.ts` — read it in full. `startApp` is lines 186-288;
++  `enterPaired`/`enterUnpaired`/`onSubmit`/`onUnauthorized` are lines 218-259;
++  `BootstrapDeps` is at line 43; `bootstrap()` is above `startApp`. The file's
++  header comment explains the invariant that exactly one of `mountHandle` /
++  `pairingTarget` is non-null at a time — preserve it.
++- `test/web/start-app.test.ts` — read it in full. Reuse the existing helpers
++  (`createTestWindow`, `createLocation`, `switchableApiClient`, `q`, `count`,
++  `click`, `tick`, `seedCredential`, `ORIGIN`); do not re-declare them. Match the
++  style of the neighbouring tests.
++- `web/src/ui/pairing-target.ts` — read it in full (94 lines). It is the view
++  the fallback re-enters. Note `showMessage`, `destroy`, and that the click
++  handler already has its own try/catch around `deps.onSubmit` writing
++  `SUBMIT_THREW_MESSAGE`; make sure your change does not make that path
++  double-report or write into a detached node in a way a test would see.
++- `web/src/ui/view-model.ts` — `describeError`, already imported by `main.ts`
++  and used by `onUnauthorized`. Read only.
++
++Files Allowed To Change:
++- `web/src/main.ts`
++- `test/web/start-app.test.ts`
++
++Constraints:
++- Follow existing repository patterns. Keep the module's comment style: the
++  existing comments explain *why*, not *what* — add one in that register
++  explaining why the fallback clears the credential.
++- Do not change `bootstrap()`'s name, signature or behaviour. Callers that
++  supply no `onUnauthorized` must be entirely unaffected — that constraint is
++  why 40 tests were added in this milestone with zero existing tests modified,
++  and it still holds.
++- Do not add a new field to `BootstrapDeps`.
++- Do not change unrelated behaviour. Do not introduce dependencies.
++- Do not weaken tests. Do not modify, rename or delete any existing test.
++- Do not broaden this beyond the finding. Anything else you notice goes under
++  `Unresolved Issues`.
++- Never run `git stash`, `git checkout --`, `git restore`, `git reset --hard`
++  or `git clean`. You share this worktree with the orchestrator and other
++  workers, and uncommitted work is not recoverable from them. To revert an
++  experiment, edit it back.
++- Another correction task has just added a test to
++  `test/web/start-app.test.ts`. Read the file fresh; do not assume the line
++  numbers quoted above for that file are still exact.
++
++Tests:
++- `bun test test/web/start-app.test.ts` (focused)
++- `bun test` (full suite — 0 fail, and the count must be the pre-existing count
++  plus exactly the tests you added)
++- `bunx tsc --noEmit -p tsconfig.json` (must be exit 0 — this repository
++  type-checks and `bun test` will NOT catch a type error. Bun matchers take
++  exactly one argument: `expect(x).toBe(y, "message")` is a TS2554 error that
++  passes at runtime. Do not write one.)
++- `bun run build` (exit 0)
++
++Return:
++- Summary
++- Files changed
++- Tests run
++- Test result
++- Unresolved issues
+diff --git a/test/web/bundle-fragment.test.ts b/test/web/bundle-fragment.test.ts
+index 167d532..f32cb39 100644
+--- a/test/web/bundle-fragment.test.ts
++++ b/test/web/bundle-fragment.test.ts
+@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll } from "bun:test";
+ import { existsSync, readFileSync } from "fs";
+ import { join } from "path";
+ import { pathToFileURL } from "url";
++import { Window } from "happy-dom";
+ import { build } from "../../scripts/build.ts";
+ import type { RenderTarget } from "../../web/src/ui/render-target";
+ import type { ApiClient } from "../../web/src/api-client";
+@@ -176,4 +177,48 @@ describe("bundle-fragment", () => {
+     expect(recordedApiClients.length).toBeGreaterThan(0);
+     expect(recordedApiClients[0]!.baseUrl).toBe("");
+   });
++
++  it("startApp renders the pairing view when launched with no credential", async () => {
++    const mod = await importBuiltBundle();
++
++    // Assert startApp is exported from the bundle
++    expect(typeof mod.startApp).toBe("function");
++
++    // Create a real DOM element using happy-dom
++    const win = new Window();
++    const root = win.document.createElement("div");
++
++    // Create test dependencies
++    const storage = createMemoryStorage();
++
++    const location: LocationPort = {
++      hash: "", // No fragment
++      get origin(): string {
++        return "https://test.example";
++      },
++      clearHash(): void {
++        // No-op for this test
++      },
++    };
++
++    const createApiClient = (config: any) => {
++      return {
++        listProfiles: async () => [],
++        getToken: () => config.getToken(),
++      } as unknown as ApiClient;
++    };
++
++    // Call startApp with the test dependencies
++    mod.startApp(root, { storage, location, createApiClient });
++
++    // Assert the pairing view was rendered into root
++    const pairingInput = root.querySelector('[data-testid="pairing-input"]');
++    const pairingSubmit = root.querySelector('[data-testid="pairing-submit"]');
++
++    expect(pairingInput).not.toBe(null);
++    expect(pairingSubmit).not.toBe(null);
++
++    // Assert the heading text is present
++    expect(root.textContent).toContain("Pair this app with your Mac");
++  });
+ });
+diff --git a/test/web/start-app.test.ts b/test/web/start-app.test.ts
+index 1c6c8d6..fb6ef6e 100644
+--- a/test/web/start-app.test.ts
++++ b/test/web/start-app.test.ts
+@@ -228,6 +228,31 @@ describe("startApp", () => {
+     expect(createCredentialStore(storage).getCredential()).toBeNull();
+   });
+ 
++  it("AC4: a bare token is paired against the app's own origin, not the token's host", () => {
++    const { root } = createTestWindow();
++    const storage = createMemoryStorage();
++    const api = switchableApiClient();
++
++    const handle = startApp(root as any, {
++      storage,
++      location: createLocation(""),
++      createApiClient: api.factory,
++    });
++    expect(handle.paired).toBe(false);
++
++    const result = handle.submitPairing("tok-bare-1234");
++
++    expect(result).toEqual({ ok: true });
++    expect(handle.paired).toBe(true);
++    expect(handle.mount).not.toBeNull();
++    expect(q(root, "prompt-input")).not.toBeNull();
++    expect(q(root, "pairing")).toBeNull();
++    expect(createCredentialStore(storage).getCredential()).toEqual({
++      baseUrl: ORIGIN,
++      token: "tok-bare-1234",
++    });
++  });
++
+   it("AC5: pairing survives a relaunch -- a fresh root over the same storage comes up paired", () => {
+     const storage = createMemoryStorage();
+     const api = switchableApiClient();
+@@ -386,6 +411,69 @@ describe("startApp", () => {
+     expect(source).not.toMatch(/location\.hash\s*=/);
+     expect(source).not.toMatch(/location\.href\s*=/);
+   });
++
++  it("C3 AC1/AC2/AC3/AC6: a synchronous bootstrap() throw during submitPairing falls back to the pairing view, clears the credential, and a relaunch does not retry the throw", () => {
++    const storage = createMemoryStorage();
++    const api = switchableApiClient();
++    const throwingDeps = {
++      storage,
++      location: createLocation(""),
++      createApiClient: api.factory,
++      createTarget: () => {
++        throw new Error("boom");
++      },
++    };
++
++    const { root } = createTestWindow();
++    const handle = startApp(root as any, throwingDeps);
++    expect(handle.paired).toBe(false);
++
++    const result = handle.submitPairing(`${ORIGIN}/app/#t=tok-boom`);
++
++    // AC1 + AC6: the throw did not escape submitPairing, and onSubmit reports
++    // failure rather than success.
++    expect(result.ok).toBe(false);
++    const message = (result as { ok: false; message: string }).message;
++    expect(message.length).toBeGreaterThan(0);
++    expect(handle.paired).toBe(false);
++    expect(q(root, "pairing")).not.toBeNull();
++    expect(q(root, "pairing-message").textContent).toBe(message);
++
++    // AC2: the credential is cleared, read back through a fresh store over
++    // the same storage rather than through a captured object.
++    expect(createCredentialStore(storage).getCredential()).toBeNull();
++
++    // AC3: relaunch over the same storage -- even with the same throwing dep
++    // still wired up -- comes up unpaired, showing the pairing view, and
++    // does not throw. The throwing dep is never reached because there is no
++    // longer a credential to pair with.
++    const second = createTestWindow();
++    const secondHandle = startApp(second.root as any, throwingDeps);
++    expect(secondHandle.paired).toBe(false);
++    expect(q(second.root, "pairing")).not.toBeNull();
++  });
++
++  it("C3 AC4: a pre-seeded credential with a throwing dep still returns normally from startApp, unpaired, showing the pairing view", () => {
++    const { root } = createTestWindow();
++    const storage = createMemoryStorage();
++    seedCredential(storage, "tok-preexisting");
++    const api = switchableApiClient();
++
++    const handle = startApp(root as any, {
++      storage,
++      location: createLocation(""),
++      createApiClient: api.factory,
++      createTarget: () => {
++        throw new Error("boom");
++      },
++    });
++
++    expect(handle.paired).toBe(false);
++    expect(handle.mount).toBeNull();
++    expect(q(root, "pairing")).not.toBeNull();
++    expect((q(root, "pairing-message").textContent as string).length).toBeGreaterThan(0);
++    expect(createCredentialStore(storage).getCredential()).toBeNull();
++  });
+ });
+ 
+ describe("bootstrap onUnauthorized hook", () => {
+diff --git a/web/src/main.ts b/web/src/main.ts
+index 39199e7..cda6d17 100644
+--- a/web/src/main.ts
++++ b/web/src/main.ts
+@@ -215,9 +215,23 @@ export function startApp(root: HTMLElement, deps?: BootstrapDeps): AppHandle {
+     }
+   }
+ 
+-  function enterPaired(): void {
++  function enterPaired(): PairingSubmitResult {
+     releasePairingTarget();
+-    mountHandle = bootstrap(root, { ...deps, storage, location, onUnauthorized });
++    try {
++      mountHandle = bootstrap(root, { ...deps, storage, location, onUnauthorized });
++      return { ok: true };
++    } catch (error) {
++      // The pairing view was already released above, so a throw here (from a
++      // synchronous createTarget/createApiClient failure) would otherwise
++      // leave the root empty with no view and no control to touch. The
++      // credential that got us into this branch is presumably what triggered
++      // it, so clear it too -- otherwise a relaunch reads the same credential
++      // and lands right back in this same throw, permanently.
++      credentialStore.clear();
++      const message = describeError(error);
++      enterUnpaired(message);
++      return { ok: false, message };
++    }
+   }
+ 
+   function enterUnpaired(message: string | null): void {
+@@ -240,8 +254,7 @@ export function startApp(root: HTMLElement, deps?: BootstrapDeps): AppHandle {
+       return { ok: false, message: PAIRING_HELP_MESSAGE };
+     }
+ 
+-    enterPaired();
+-    return { ok: true };
++    return enterPaired();
+   }
+ 
+   // Fires asynchronously, from bootstrap()'s listProfiles() rejection, and so

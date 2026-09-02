@@ -1,0 +1,509 @@
+diff --git a/.harness/milestones.md b/.harness/milestones.md
+index 19c4d2e..249e59f 100644
+--- a/.harness/milestones.md
++++ b/.harness/milestones.md
+@@ -320,9 +320,17 @@ deviation from `.harness/architecture.md` was required, so nothing is recorded u
+ ### Acceptance Criteria
+ - [x] **AC6** — Cancelling mid-generation returns status `cancelled` and output stops.
+       Proven live.
+-- [x] (derived: FR6, edge case) Cancelling an already complete, failed or cancelled
+-      generation is idempotent and returns that generation's actual final status. Proven
+-      live.
++- [x] (derived: FR6, edge case) Cancelling an already **complete or cancelled** generation
++      is idempotent and returns that generation's actual final status. Proven live for both
++      of those terminal states.
++      **Narrowed in review cycle 1** from the requirement's original three-state wording
++      ("already complete, failed, or cancelled"). The third named state,
++      already-**`failed`**, is *not* proven live and is no longer claimed to be: it cannot
++      be induced from the client. See the Follow-up "the already-`failed` idempotency case
++      is not provable from the client" below, and the disclosure comment now carried in
++      `src/host/m4-proof.ts` Phase 2. The requirement in `.harness/requirements.md`
++      (lines 145-146) is unchanged; what changed is this milestone's claim about how much
++      of it M4 demonstrates.
+ - [x] (derived: edge case) The cancelled generation's partial output is stored locally as a
+       turn marked cancelled, and that flag matches the `cancelled` field on the
+       corresponding turn returned by `GET /v1/sessions/{session_id}`.
+@@ -396,7 +404,10 @@ orchestrator — each producing fresh session and conversation ids, i.e. three g
+ distinct live runs rather than one replayed result. All three agreed.
+ 
+ Orchestrator's own run (conversations `be6c150f-6197-4046-8667-bbbf5294bdd9` and
+-`1d9b39d8-9e0c-4c58-8728-5c763681cd8b`):
++`1d9b39d8-9e0c-4c58-8728-5c763681cd8b`). **This output predates the review-cycle-1
++correction**, which narrowed Criterion 2's PASS line to
++`(idempotent cancel returns the actual final status: complete, cancelled)`; the
++post-correction run is quoted under `### Review`:
+ 
+ ```
+ === PHASE 0: DISCOVERY ===
+@@ -438,6 +449,9 @@ M4 LIVE PROOF: PASS
+   half the phase-1 reconnaissance did not cover: a generation that ran to `complete` was
+   then cancelled and the call returned **`complete`, not `cancelled`**. Re-cancelling the
+   already-`cancelled` Criterion 1 generation twice returned `cancelled` both times.
++  Phase 2 covers **two** of the three terminal states the requirement names; the
++  already-`failed` state is not exercised, and after review cycle 1 Phase 2's own PASS line
++  says so (`...actual final status: complete, cancelled`). See the Follow-up below.
+ - **(derived: edge case) local/remote agreement** — proven by Phase 3. The locally stored
+   transcript's assistant turn and the assistant turn from `GET /v1/sessions/{session_id}`
+   agree on both the `cancelled` flag (`true`) and the partial content (`"As I"`,
+@@ -581,8 +595,117 @@ None. All three acceptance criteria are proven live and the milestone is at `REV
+ 
+ ### Review
+ 
++**Cycle 1** — reviewer at Mid tier (`sonnet`) returned CHANGES REQUIRED: one IMPORTANT
++finding and two OPTIONAL. Report: `.harness/reviews/M4-cycle1.md`.
++
++- **Pre-correction snapshot:** `ca39d33f423bb07d400735341f8bdb2fcf1e05f9`
++- **Correction diff:** `.harness/reviews/M4-cycle1.patch`
++
++**IMPORTANT — criterion 2 claimed three terminal states and proved two. RESOLVED**, by the
++reviewer's option (b), after establishing that option (a) is not available.
++
++Option (a) — add a live sub-case that drives a generation to `failed` — was tested before
++it was rejected, not assumed impossible. Task `M4-C1` (Cheap, attempt 1, PASS; packet
++`.harness/tasks/M4-C1.md`) probed the live API, and an independent verifier re-ran the
++decisive request itself rather than accepting the probe's account of it:
++
++```
++POST, nonexistent profile_id -> HTTP 400 {"api_version":"v1","error":"unknown_profile"}
++POST, empty prompt           -> HTTP 400 {"api_version":"v1","error":"invalid_request"}
++POST, nonexistent session    -> HTTP 404 {"api_version":"v1","error":"unknown_session"}
++```
++
++No `x-generation-id` header and no generation id in any body: the service rejects bad input
++before a generation exists, so there is no generation to cancel. The remaining routes to
++`failed` are `inference_failed` (no client-side lever) and `generation_timed_out` (300s,
++out of budget). Option (a) is therefore unreachable without a server-side change M4 does
++not own. Neither task modified a repository source file.
++
++The correction is consequently honest disclosure in both places the overstatement lived:
++
++- **the record** — acceptance criterion 2 above narrowed to "complete or cancelled", with
++  the gap disclosed under `### Follow-ups`, in the same style as the empty-partial-output
++  note;
++- **the evidence itself** — task `M4-C2` (Cheap, attempt 1, PASS; packet
++  `.harness/tasks/M4-C2.md`) added a Phase 2 disclosure comment to `src/host/m4-proof.ts`
++  and narrowed its Criterion 2 PASS/FAIL line to
++  `(idempotent cancel returns the actual final status: complete, cancelled)`, so the proof
++  stops overstating its own coverage at the point where the evidence is produced.
++
++The requirement itself is untouched; only M4's claim about it changed.
++
++**OPTIONAL 1 — criterion 3's dead flag-equality assertion. TAKEN**, in the same `M4-C2`
++task. Both the local and the service assistant turn were selected on
++`role === "assistant" && cancelled === true`, so the later
++`localAssistantTurn.cancelled !== serviceAssistantTurn.cancelled` could never fire. Both
++selections now use `role === "assistant"` alone, and the two "no ... found" messages no
++longer claim a predicate they no longer apply, making the flag comparison a live
++assertion. Taken because it converts dead code into real evidence in a file already being
++corrected, at no extra review scope. The verifier traced all five divergence paths — no
++local turn, no `sessionId`, no service turn, differing `cancelled`, differing `content` —
++and confirmed each still sets `criterion3Passed = false`. The criterion is strengthened,
++not weakened.
++
++**OPTIONAL 2 — criterion 1's timing sensitivity. DECLINED**, deliberately. The reviewer
++recommends no action now, the sensitivity is inherent to cancelling a live
++non-deterministic generation, and it is already recorded (T3 was routed Mid for exactly
++this reason). Adding retry logic would mask a flake rather than fix one that has not
++occurred. Revisit if `proof:m4` becomes flaky in CI.
++
++**Files the cycle-1 corrections changed:**
++
++- `src/host/m4-proof.ts` — the only repository source file touched. Named by both the
++  IMPORTANT and the first OPTIONAL finding, so it is squarely in cycle-1 scope.
++- `.harness/milestones.md` — this record (criterion 2 narrowed, Follow-up added, this
++  section, cycle count).
++- `.harness/reviews/M4-cycle1.patch` — the correction diff.
++- `.harness/tasks/M4-C1.md`, `.harness/tasks/M4-C2.md` — the two correction packets.
++
++**No file outside the cycle-1 findings' scope was changed.** Specifically
++`web/src/session-coordinator.ts`, `test/web/session-coordinator.test.ts` and `package.json`
++are byte-identical to their pre-correction state, confirmed by the verifier diffing the
++pre-correction snapshot against its own post snapshot. The next review can safely scope to
++the patch.
++
++**Post-correction validation**, re-run by the verifier against the corrected tree with
++`PATH="$HOME/.bun/bin:$PATH"`:
++
++- `bun test` -> **253 pass / 0 fail / 546 expect() calls**, exit 0. Unchanged.
++- `bun run proof:m4` -> **exit 0**, all three criteria PASS, on a genuinely fresh live run
++  (conversations `431e10e3-a6fd-4ad0-abea-8c174082e5a5` and
++  `11890342-b34e-4d2f-9ebd-a99efe961646`, distinct from every previously recorded run):
++
++```
++=== PHASE 1: CRITERION 1 - CANCEL MID-GENERATION ===
++  Deltas before cancel issued: 1
++  Deltas total (final): 2
++  cancel() status: cancelled
++  send() status: cancelled
++Criterion 1 (AC6 - cancel mid-generation returns cancelled and output stops): PASS
++
++=== PHASE 2: CRITERION 2 - IDEMPOTENT CANCEL RETURNS THE ACTUAL FINAL STATUS ===
++  cancel(already-complete generation) status: complete
++  re-cancel #1 of already-cancelled generation status: cancelled
++  re-cancel #2 of already-cancelled generation status: cancelled
++Criterion 2 (idempotent cancel returns the actual final status: complete, cancelled): PASS
++
++=== PHASE 3: CRITERION 3 - LOCAL TRANSCRIPT AGREES WITH THE SERVICE ===
++  Local turn: role=assistant cancelled=true content="As I"
++  Service turn: role=assistant cancelled=true content="As I"
++Criterion 3 (local transcript agrees with the service): PASS
++
++M4 LIVE PROOF: PASS
++```
++
++  Criterion 3's `cancelled=true` on both sides is now a live assertion rather than a
++  restatement of the selection predicate.
++- `bunx tsc --noEmit` -> `src/host/m4-proof.ts` still produces exactly **6x TS5097 +
++  4x TS2591 = 10**, no new error class. Parity with `m3-proof.ts` preserved.
++
++Tasks ran strictly sequentially; no two contexts mutated a shared source file concurrently.
++
+ ### Review Cycles
+-0
++1
+ 
+ ### Follow-ups
+ 
+@@ -595,6 +718,30 @@ None. All three acceptance criteria are proven live and the milestone is at `REV
+   records none, the local mirror would hold a turn the service does not — a divergence the
+   third criterion does not catch. Worth probing and reconciling; not a defect against any M4
+   criterion as written.
++- **`.harness/milestones.md` is over the ~400-line archiving threshold (1111 lines) and
++  nothing is archivable yet.** M1 and M2 are already archived to `.harness/archive/`.
++  The only other settled milestone is M3, and it is the *most recently settled*, which the
++  archiving rule holds back precisely so the next session can see it. M5-M11 are `TODO` and
++  M4 is active, so neither qualifies. Archiving was considered this cycle and correctly
++  declined, not overlooked. The moment M4 reaches `DONE`, M3 becomes archivable and M4
++  takes its place as most-recent — archive M3 then. Most of the current bulk is M4's own
++  entry plus the seven unstarted milestones, neither of which archiving addresses.
++- **The already-`failed` idempotency case is not provable from the client.** The
++  requirement (`.harness/requirements.md` lines 145-146) names three terminal states for
++  idempotent cancel — already-complete, already-**failed**, already-cancelled. M4 proves
++  `complete` and `cancelled` live. It does **not** prove `failed`, and cycle 1 established
++  by live probe that it cannot: every malformed request is rejected at the HTTP layer
++  before a generation id exists (`unknown_profile` -> 400, `invalid_request` -> 400,
++  `unknown_session` -> 404; no `x-generation-id` header, no id in any body), so there is
++  nothing to cancel. The only remaining routes to a `failed` generation are
++  `inference_failed`, which has no client-side lever, and `generation_timed_out`, which
++  needs a 300s wait. The `failed` case therefore rests on the documented API contract plus
++  the fact that `cancel()` forwards the service's `status` string verbatim with no
++  per-value branching — i.e. on **inference, not live proof**, which is exactly the
++  distinction this project's standing rule exists to keep visible. Closing it needs a
++  server-side lever to force an `inference_failed` generation (a fault-injection profile,
++  or a test hook); that is not M4's to build. Same class as the empty-partial-output gap
++  below.
+ - **The `error` terminal path still records no assistant turn**, so partial output from a
+   failed generation is dropped locally even though the service may have recorded it. Out of
+   scope for M4 (the criteria are about cancellation), and likely M7's business when error
+diff --git a/.harness/tasks/M4-C1.md b/.harness/tasks/M4-C1.md
+new file mode 100644
+index 0000000..bf107b6
+--- /dev/null
++++ b/.harness/tasks/M4-C1.md
+@@ -0,0 +1,83 @@
++# Task M4-C1 — Probe: can a live generation be driven to a terminal `failed` status?
++
++Tier: Cheap
++Reason routed here: none of the four escalation reasons applies. Clearly specified
++(run requests, report what came back), bounded (read-only probe, changes NO source
++file), low risk (no production code touched), easily verified (the raw HTTP output
++is the evidence).
++
++## Goal
++
++Answer ONE factual question against the LIVE harness API, and report exactly what
++you observed:
++
++> Is there a fast, reliable way to make a *generation* reach a terminal status of
++> `failed` (or `error`), such that the generation still has an id that
++> `POST /v1/.../cancel` can be called against?
++
++This is an INVESTIGATION. You must NOT modify any file under `src/`, `web/`,
++`test/`, or `package.json`. Write nothing except a throwaway script under
++`/private/tmp/claude-501/-Users-ryankenny-Projects-phoneToLocalModel/0b98fd95-08cb-4d39-b8e0-507358223a47/scratchpad/`.
++
++## Context
++
++- Repo: `/Users/ryankenny/Projects/phoneToLocalModel`
++- Bun 1.4.0 is at `~/.bun/bin/bun` and is NOT on PATH in non-interactive shells.
++  Export `PATH="$HOME/.bun/bin:$PATH"`. Node is not installed.
++- Config/auth helpers: `src/host/config.ts` exports `resolveBaseUrl()` and
++  `readToken()`. `web/src/api-client.ts` exports `createApiClient`. Read
++  `src/host/m4-proof.ts` lines 1-110 to see the existing setup pattern and copy it.
++- A generation is started with a request body of shape
++  `{ profile_id: <string>, prompt: <string> }`.
++- Profile ids are discovered at runtime via `apiClient.listProfiles()` — never
++  hardcode one.
++- `.harness/requirements.md` lines 76-81 names these harness error codes:
++  `profile_resolution_failed`, `inference_failed`, `incomplete_stream`,
++  `session_unavailable`, `generation_timed_out`, `stream_write_failed`.
++- There is a 300s generation timeout. DO NOT wait for it. Any probe that would
++  take longer than ~60s total is out of scope — report that instead.
++
++## What to try, in order, stopping as soon as one succeeds
++
++1. Start a generation with a syntactically valid but NONEXISTENT `profile_id`
++   (e.g. a fresh uuid, or `"no-such-profile"`).
++   Record: the HTTP status code and the FULL raw response body of the POST.
++   - If the POST returns a generation id, open its event stream and record every
++     event until terminal. Record the terminal status verbatim.
++   - Then call cancel on that generation id and record the HTTP status and the
++     full raw response body.
++   - If the POST instead returns a 4xx/5xx with no generation id, record that
++     verbatim and move on.
++2. If (1) yields no generation id: try any other cheap malformed-but-accepted
++   request you can see a route to from the API's own responses (e.g. an empty
++   prompt, an oversized prompt) — but only if the attempt costs under ~20s.
++3. If nothing produces a generation that reaches a terminal `failed`/`error`
++   status within the budget, that is a perfectly good and expected answer.
++
++## Acceptance criteria
++
++- AC1 — You ran at least attempt (1) against the LIVE API and report the POST's
++  HTTP status code and full raw response body VERBATIM.
++- AC2 — You state, unambiguously, YES or NO: can a generation be driven to a
++  terminal `failed`/`error` status and then cancelled, within ~60s, without
++  modifying project source?
++- AC3 — If YES: you report the exact terminal status string, the exact cancel
++  response body, and the precise recipe (request body + endpoint sequence) that
++  produced it.
++- AC4 — If NO: you report exactly what each attempt returned and why it does not
++  yield a cancellable failed generation.
++
++## Files allowed to change
++
++NONE in the repository. Scratchpad scripts only, under
++`/private/tmp/claude-501/-Users-ryankenny-Projects-phoneToLocalModel/0b98fd95-08cb-4d39-b8e0-507358223a47/scratchpad/`.
++If you modify any tracked or untracked project file, the task has FAILED.
++
++## Tests
++
++None. The evidence is the verbatim HTTP output you report.
++
++## Return
++
++Report raw observations, not conclusions about what the project should do. Quote
++response bodies verbatim. Do not propose or make any source change.
+diff --git a/.harness/tasks/M4-C2.md b/.harness/tasks/M4-C2.md
+new file mode 100644
+index 0000000..f7e1a4c
+--- /dev/null
++++ b/.harness/tasks/M4-C2.md
+@@ -0,0 +1,150 @@
++# Task M4-C2 — Correct `src/host/m4-proof.ts` for the M4 cycle-1 review findings
++
++Tier: Cheap
++Reason routed here: none of the four escalation reasons applies. Clearly specified
++(three precisely-named edits, all in one file, all stated below), bounded (one file),
++low risk (the file is a proof script, not production code; no `web/src/` behaviour
++changes), easily verified (`bun run proof:m4` must still exit 0 with all three
++criteria PASS, and `bun test` must still be 253 pass / 0 fail).
++
++## Review report
++
++`/Users/ryankenny/Projects/phoneToLocalModel/.harness/reviews/M4-cycle1.md`.
++Read it for context. You are correcting the IMPORTANT finding (partially — the
++rest of it is a record change the orchestrator makes) and the first OPTIONAL
++finding. Do NOT act on the second OPTIONAL finding (timing sensitivity); the
++orchestrator has explicitly declined it.
++
++## Established fact you must not re-investigate
++
++A separate, already-completed and independently-verified probe (task `M4-C1`)
++established against the LIVE API that a generation CANNOT be driven to a terminal
++`failed` status: every malformed request is rejected at the HTTP layer with a 4xx
++and no generation id is ever created.
++
++  POST with a nonexistent profile_id -> HTTP 400 `{"api_version":"v1","error":"unknown_profile"}`
++  POST with an empty prompt          -> HTTP 400 `{"api_version":"v1","error":"invalid_request"}`
++  POST to a nonexistent session      -> HTTP 404 `{"api_version":"v1","error":"unknown_session"}`
++
++No `x-generation-id` header and no generation id in any body. The only remaining
++routes to a `failed` generation are `inference_failed` (requires the backend
++inference to fail — no client-side lever) and `generation_timed_out` (a 300s wait,
++out of budget).
++
++**Do NOT attempt to induce a failed generation. Do NOT add a sub-case for it.**
++The correction is to disclose the gap honestly, not to close it.
++
++## Context
++
++- Repo root: `/Users/ryankenny/Projects/phoneToLocalModel`
++- Bun 1.4.0 is at `~/.bun/bin/bun` and is NOT on PATH in non-interactive shells.
++  Export `PATH="$HOME/.bun/bin:$PATH"`. Node is not installed; do not reach for it.
++- `bun run proof:m4` runs against the LIVE harness and takes ~30-60s.
++- The harness has a SINGLE generation slot. If a run fails part-way it can wedge
++  that slot; the script already has a `lastAdmitted` / `releaseIfStuck` safety net.
++  Do not remove or bypass it.
++
++## The three edits
++
++### Edit 1 — disclose the untested `failed` sub-case (IMPORTANT finding)
++
++In the PHASE 2 header comment block (currently at lines 224-225, immediately above
++the `console.log("\n=== PHASE 2: ...")` call), add a clearly-worded comment
++recording that this phase proves the idempotency contract for TWO of the three
++terminal states the requirement names, and why the third is absent. It must state,
++in your own clear prose:
++
++- the requirement names three terminal states: already-complete, already-failed,
++  already-cancelled;
++- this phase exercises `complete` (sub-case A) and `cancelled` (sub-case B) live;
++- the already-`failed` state is NOT exercised, because a `failed` generation
++  cannot be induced from the client: malformed requests are rejected at the HTTP
++  layer with 4xx before any generation id exists (quote the three observed
++  responses above), leaving only `inference_failed` (no client-side lever) and
++  `generation_timed_out` (a 300s wait);
++- the `failed` case therefore rests on the documented API contract and on the fact
++  that `cancel()` forwards the service's `status` string verbatim with no
++  per-value branching — i.e. on inference, NOT on live proof.
++
++### Edit 2 — narrow the Phase 2 PASS/FAIL wording to what is actually proven
++
++The two `console.log` lines that currently read
++
++    "Criterion 2 (idempotent cancel returns the actual final status): PASS"
++    "Criterion 2 (idempotent cancel returns the actual final status): FAIL"
++
++must be narrowed so the printed evidence does not overstate its own coverage.
++Change the parenthetical to name the two states actually exercised — e.g.
++`(idempotent cancel returns the actual final status: complete, cancelled)`.
++Keep the `: PASS` / `: FAIL` suffix EXACTLY as-is at the end of each line; it is
++the machine-visible outcome marker. Change nothing else about these two lines.
++
++### Edit 3 — make criterion 3's flag-equality assertion live (OPTIONAL finding 1)
++
++Currently both the local and the service assistant turn are selected with the
++predicate `t.role === "assistant" && t.cancelled === true`, so the later
++`localAssistantTurn.cancelled !== serviceAssistantTurn.cancelled` comparison can
++structurally never fire — it is dead.
++
++Change BOTH selections to be independent of the `cancelled` flag: select the
++assistant turn by `t.role === "assistant"` alone (both sides are single-generation
++conversations, so there is exactly one assistant turn). The flag-equality
++comparison then becomes a genuinely live assertion.
++
++Also update the two failure messages that currently say
++`"no local assistant turn with cancelled=true found"` and
++`"no service-side assistant turn with cancelled=true found"` so they no longer
++claim a `cancelled=true` predicate they no longer apply.
++
++**The criterion must not become weaker.** After this change, a service turn
++recorded with `cancelled: false` must still FAIL criterion 3 — it will now fail on
++the flag-equality comparison (with a clearer diagnostic) instead of on the
++"no matching turn" branch. Add a check, or convince yourself by reading, that
++`criterion3Passed` is still set `false` on every divergence path, including when
++either turn is missing entirely. Do not remove the content-equality assertion.
++
++## Files allowed to change
++
++- `src/host/m4-proof.ts`
++
++NOTHING else. In particular do NOT touch `web/src/session-coordinator.ts`,
++`test/web/session-coordinator.test.ts`, `package.json`, or anything under
++`.harness/`.
++
++## Acceptance criteria
++
++- AC1 — The Phase 2 comment block discloses the untested already-`failed` state
++  and the reason it cannot be induced, per Edit 1.
++- AC2 — The two Criterion 2 PASS/FAIL log lines name only `complete` and
++  `cancelled`, and still end in `: PASS` / `: FAIL` respectively.
++- AC3 — Both assistant-turn selections in Phase 3 use `role === "assistant"` alone,
++  with no `cancelled` term in the predicate, and the two "no ... found" failure
++  messages no longer mention `cancelled=true`.
++- AC4 — `bun run proof:m4` exits 0 and prints PASS for all three criteria, with
++  `Local turn: ... cancelled=true` and `Service turn: ... cancelled=true`.
++- AC5 — `bun test` is still 253 pass / 0 fail, exit 0.
++- AC6 — `src/host/m4-proof.ts` is the ONLY file you changed.
++
++## Tests
++
++Run all three, with `PATH="$HOME/.bun/bin:$PATH"`, from the repo root:
++
++    bun test
++    bun run proof:m4
++    bunx tsc --noEmit
++
++`bun test` must be 253 pass / 0 fail, exit 0.
++`bun run proof:m4` must exit 0 with all three criteria PASS.
++`bunx tsc --noEmit` is expected to FAIL overall — that is a pre-existing
++repository-wide backlog. The bar is only that `src/host/m4-proof.ts` produces the
++SAME 10 errors it did before: 6x TS5097 and 4x TS2591, and no other error class.
++Report the m4-proof.ts error codes and counts you observe.
++
++If `bun run proof:m4` fails on a timing race (e.g. the generation completes before
++the mid-generation cancel lands), re-run it once. If it fails twice, report FAIL
++with the full output rather than changing the proof's cancel timing.
++
++## Return
++
++Report the exact commands, exit statuses, and the full `bun run proof:m4` output.
++State explicitly which files you changed.
+diff --git a/src/host/m4-proof.ts b/src/host/m4-proof.ts
+index bb97e2b..e6f37da 100644
+--- a/src/host/m4-proof.ts
++++ b/src/host/m4-proof.ts
+@@ -222,6 +222,23 @@ async function main() {
+ 
+   // ---------------------------------------------------------------------
+   // PHASE 2 - Criterion 2: idempotent cancel returns the ACTUAL final status
++  //
++  // NOTE: This phase proves the idempotency contract for TWO of the three
++  // terminal states the requirement names: already-complete, already-failed,
++  // and already-cancelled. Sub-case A exercises "complete" and sub-case B
++  // exercises "cancelled" live against the API. The already-"failed" state
++  // is NOT exercised, because a failed generation cannot be induced from the
++  // client: malformed requests are rejected at the HTTP layer with 4xx before
++  // any generation id exists (e.g., POST with nonexistent profile_id -> HTTP 400
++  // {"api_version":"v1","error":"unknown_profile"}; POST with empty prompt ->
++  // HTTP 400 {"api_version":"v1","error":"invalid_request"}; POST to nonexistent
++  // session -> HTTP 404 {"api_version":"v1","error":"unknown_session"}). The only
++  // remaining routes to a "failed" generation are inference_failed (requires the
++  // backend inference to fail, no client-side lever) and generation_timed_out
++  // (a 300s wait, out of budget). The "failed" case therefore rests on the
++  // documented API contract and on the fact that cancel() forwards the service's
++  // status string verbatim with no per-value branching — i.e. on inference, not
++  // on live proof.
+   // ---------------------------------------------------------------------
+   console.log(
+     "\n=== PHASE 2: CRITERION 2 - IDEMPOTENT CANCEL RETURNS THE ACTUAL FINAL STATUS ==="
+@@ -311,9 +328,9 @@ async function main() {
+   }
+ 
+   if (criterion2Passed) {
+-    console.log("Criterion 2 (idempotent cancel returns the actual final status): PASS");
++    console.log("Criterion 2 (idempotent cancel returns the actual final status: complete, cancelled): PASS");
+   } else {
+-    console.log("Criterion 2 (idempotent cancel returns the actual final status): FAIL");
++    console.log("Criterion 2 (idempotent cancel returns the actual final status: complete, cancelled): FAIL");
+     allPassed = false;
+   }
+ 
+@@ -326,11 +343,11 @@ async function main() {
+ 
+   const localConversation1 = conversationStore.getConversation(conversation1.id);
+   const localAssistantTurn = localConversation1?.turns.find(
+-    (t) => t.role === "assistant" && t.cancelled === true
++    (t) => t.role === "assistant"
+   );
+ 
+   if (!localConversation1 || !localAssistantTurn) {
+-    console.log("  FAIL - no local assistant turn with cancelled=true found");
++    console.log("  FAIL - no local assistant turn found");
+     criterion3Passed = false;
+   } else {
+     console.log(
+@@ -344,10 +361,10 @@ async function main() {
+     } else {
+       const snapshot = await apiClient.getSession(sessionId1);
+       const serviceAssistantTurn = snapshot.turns.find(
+-        (t) => t.role === "assistant" && t.cancelled === true
++        (t) => t.role === "assistant"
+       );
+       if (!serviceAssistantTurn) {
+-        console.log("  FAIL - no service-side assistant turn with cancelled=true found");
++        console.log("  FAIL - no service-side assistant turn found");
+         criterion3Passed = false;
+       } else {
+         console.log(

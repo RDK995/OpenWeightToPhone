@@ -1,0 +1,817 @@
+diff --git a/.harness/tasks/M10-C1.md b/.harness/tasks/M10-C1.md
+new file mode 100644
+index 0000000..7901f91
+--- /dev/null
++++ b/.harness/tasks/M10-C1.md
+@@ -0,0 +1,106 @@
++TASK
++
++Goal:
++Make a failing cache write in the service worker's shell handler unable to discard an
++already-successful network response.
++
++Relevant Requirements:
++Correction for the second IMPORTANT finding in `.harness/reviews/M10-cycle1.md`
++("A failed cache write discards a successful network response"). Read that finding in the
++report — it states the problem, the reproduction and the suggested correction. Do not read
++the rest of the report.
++
++M10's third acceptance criterion (derived: FR2) is that the service worker uses a
++network-first strategy for the shell: after the bundle is rebuilt, a fetch through the
++worker's strategy returns the NEW build, not the cached one. The defect below silently
++violates exactly that criterion whenever the cache write fails.
++
++Background: in `web/src/sw.ts:46-75`, `handleShellRequest` awaits `deps.cachePut` at line 52
++INSIDE the same `try` whose `catch` at line 65 is the offline fallback. So if the cache
++write rejects (e.g. `QuotaExceededError` under iOS storage pressure), a 200 response already
++in hand is thrown away: with a warm cache the handler silently returns the STALE build, and
++with an empty cache it rethrows and the document fails to load entirely.
++
++Acceptance Criteria:
++- Follow Red -> Green -> Refactor. Write the tests FIRST, run them against the UNCHANGED
++  `web/src/sw.ts`, and confirm they FAIL for the right reason. Paste that red output in your
++  Summary. This is mandatory, not optional: a test that passes before the fix proves nothing,
++  and a non-discriminating test is the specific failure mode this task is watching for.
++- Add to `test/web/sw.test.ts`, inside the existing `describe("handleShellRequest", ...)`:
++  - A test where the network returns a 200 "NEW BUILD", `cachePut` REJECTS, and the cache is
++    WARM (`cacheMatch` resolves "OLD BUILD"). Assert the returned body is "NEW BUILD" and
++    `response.ok` is true. Against the unchanged source this must fail by returning
++    "OLD BUILD".
++  - A test where the network returns a 200 "NEW BUILD", `cachePut` REJECTS, and the cache is
++    EMPTY (`cacheMatch` resolves `undefined`). Assert the call resolves with body "NEW BUILD"
++    and does not throw. Against the unchanged source this must fail by throwing.
++  - A test where `cachePut` THROWS SYNCHRONOUSLY (not a rejected promise) on the ok path,
++    with a warm cache, asserting "NEW BUILD" is still returned. The correction must handle
++    both shapes.
++  Use the file's existing `createResponse` helper and its existing fake-deps style.
++- Then correct `web/src/sw.ts` so the cache write cannot fail the request. Use this shape —
++  an inner `try`/`catch` around the awaited write, INSIDE the `if (networkResponse.ok)`
++  branch, before `return networkResponse`:
++
++      if (networkResponse.ok) {
++        // A cache write is an optimisation and must never be able to fail a
++        // request that already succeeded on the network.
++        try {
++          await deps.cachePut(request, networkResponse.clone());
++        } catch {
++          // Cache write failed (e.g. QuotaExceededError). Ignore it and return
++          // the fresh response regardless.
++        }
++        return networkResponse;
++      }
++
++  Do NOT use the report's suggested `void deps.cachePut(...).catch(() => {})`. That was a
++  reasonable suggestion but it is wrong for this codebase for two reasons, and this decision
++  has already been made — do not revisit it: (a) it does not catch a SYNCHRONOUS throw from
++  `cachePut`, which would still land in the outer `catch`; and (b) it makes the write
++  fire-and-forget, breaking the existing discriminating test at
++  `test/web/sw.test.ts` (the one asserting `cachedBody` was replaced with "NEW BUILD" after
++  `await handleShellRequest` returns), which depends on the write having completed.
++- After the correction, ALL tests in `test/web/sw.test.ts` pass, including the five that
++  existed before — especially the existing network-first discriminating test. Do not modify
++  or delete any existing test in that file. Your change to it must be purely additive.
++- The offline path is unchanged: a network failure with a warm cache still returns the
++  cached body, and a network failure with an empty cache still rethrows the original error
++  object. The existing tests cover both; they must still pass unmodified.
++- `bunx tsc --noEmit` exits 0.
++
++Relevant Files:
++- `web/src/sw.ts` — `handleShellRequest` at lines 38-75 is the only function to change.
++- `test/web/sw.test.ts` — read it in full before adding to it.
++
++Files Allowed To Change:
++- `web/src/sw.ts`
++- `test/web/sw.test.ts`
++
++Constraints:
++- Follow existing repository patterns.
++- Do not change unrelated behaviour. `shouldHandle`, `staleCacheNames`, the cache constants
++  and the environment-guarded listener block at the bottom of `sw.ts` are all out of scope.
++- Do not introduce dependencies.
++- Do not weaken tests.
++- Do NOT run `bun run build`. It rewrites `web/dist/`, which is outside your allowed files.
++  The orchestrator runs the build separately.
++- Do not run `git stash`, `git checkout --`, `git restore`, `git reset --hard` or
++  `git clean`. You share this working tree with a concurrent worker.
++
++Tests:
++`~/.bun/bin/bun test test/web/sw.test.ts` for the red/green loop, then
++`~/.bun/bin/bun test` and `~/.bun/bin/bunx tsc --noEmit` before returning.
++Bun is NOT on PATH in non-interactive shells: use `~/.bun/bin/bun` or first
++`export PATH="$HOME/.bun/bin:$PATH"`. Node is not installed.
++
++Tier: Cheap. Routing reason: none — the defect, the correction shape and the test oracle are
++all stated precisely, the blast radius is one function and one test file, and `bun test`
++settles it.
++
++Return:
++- Summary (MUST include the red output from before the fix, and the green output after)
++- Files changed
++- Tests run
++- Test result (pass/fail counts for the full suite)
++- Unresolved issues
+diff --git a/.harness/tasks/M10-C2.md b/.harness/tasks/M10-C2.md
+new file mode 100644
+index 0000000..b0bf651
+--- /dev/null
++++ b/.harness/tasks/M10-C2.md
+@@ -0,0 +1,76 @@
++TASK
++
++Goal:
++Make the app shell's asset references absolute under `/app/` so they resolve correctly no
++matter which URL form loaded the document.
++
++Relevant Requirements:
++Correction for the third finding (OPTIONAL) in `.harness/reviews/M10-cycle1.md`
++("`https://<host>/app` without a trailing slash serves `index.html` at path `/app`, where
++the shell's relative `href`s resolve to the origin root and 404/401"). Read that finding in
++the report. Do not read the rest of the report.
++
++Acceptance Criteria:
++- `web/public/index.html`'s three asset references become absolute, `/app/`-rooted paths,
++  matching the convention `web/public/app.webmanifest` already uses for its icons
++  (`/app/icons/icon-192.png` etc.):
++  - line 20 `href="./app.webmanifest"`        -> `href="/app/app.webmanifest"`
++  - line 21 `href="./icons/apple-touch-icon-180.png"` -> `href="/app/icons/apple-touch-icon-180.png"`
++  - line 30 `src="./main.js"`                 -> `src="/app/main.js"`
++  Change nothing else in that file. In particular do not touch the viewport meta, the
++  inline `<style>`, or any of the `apple-mobile-web-app-*` meta tags.
++- `test/web/manifest.test.ts` currently asserts the three RELATIVE forms verbatim, at
++  roughly lines 97, 104 and 122. Update those three assertions to the new absolute forms.
++  This is a convention change, not a loosening: do not delete the assertions, do not replace
++  an exact-string assertion with a weaker `toContain` of a shorter substring, and keep each
++  test's name and structure. Every other assertion in that file stays exactly as it is.
++- Add ONE new test to `test/web/manifest.test.ts` that would have caught the original bug:
++  read `web/public/index.html` and assert it contains NO `href="./` and NO `src="./`
++  occurrences at all. Confirm it discriminates by running it against the UNCHANGED
++  `index.html` first and observing it fail, then making the change. Paste that red output in
++  your Summary.
++- Do not change `src/host/pwa-server.ts`. The report offers a server-side 301 redirect as an
++  alternative correction; that alternative is explicitly NOT being taken, because
++  `stripMountPrefix` is pre-existing C4 code this milestone did not author and changing the
++  server's routing is a wider blast radius than this OPTIONAL finding warrants. This decision
++  is made — do not revisit it.
++- `~/.bun/bin/bun test` passes with no fewer tests than before, and `~/.bun/bin/bunx tsc
++  --noEmit` exits 0. Note that `test/build.test.ts` asserts `web/dist/index.html` is a byte
++  copy of `web/public/index.html`; check whether it reads from a freshly-built dist or a
++  stale one, and report in Unresolved Issues if it fails for that reason rather than
++  working around it.
++
++Relevant Files:
++- `web/public/index.html` (32 lines — read it in full)
++- `test/web/manifest.test.ts` (read it in full before editing)
++- `web/public/app.webmanifest` — read only, to confirm the absolute-path convention.
++
++Files Allowed To Change:
++- `web/public/index.html`
++- `test/web/manifest.test.ts`
++
++Constraints:
++- Follow existing repository patterns (the HTML file uses tabs).
++- Do not change unrelated behaviour.
++- Do not introduce dependencies.
++- Do not weaken tests.
++- Do NOT run `bun run build`. It rewrites `web/dist/`, which is outside your allowed files.
++  The orchestrator runs the build separately.
++- Do not run `git stash`, `git checkout --`, `git restore`, `git reset --hard` or
++  `git clean`. You share this working tree with a concurrent worker.
++
++Tests:
++`~/.bun/bin/bun test test/web/manifest.test.ts` for the red/green loop, then
++`~/.bun/bin/bun test` and `~/.bun/bin/bunx tsc --noEmit` before returning.
++Bun is NOT on PATH in non-interactive shells: use `~/.bun/bin/bun` or first
++`export PATH="$HOME/.bun/bin:$PATH"`. Node is not installed.
++
++Tier: Cheap. Routing reason: none — the exact three lines and their exact replacements are
++named, the blast radius is one HTML file and one test file, and `bun test` settles it.
++
++Return:
++- Summary (MUST include the red output from before the change)
++- Files changed
++- Tests run
++- Test result (pass/fail counts for the full suite)
++- Unresolved issues
+diff --git a/.harness/tasks/M10-C3.md b/.harness/tasks/M10-C3.md
+new file mode 100644
+index 0000000..495d849
+--- /dev/null
++++ b/.harness/tasks/M10-C3.md
+@@ -0,0 +1,74 @@
++TASK
++
++Goal:
++Stop `test/icons.test.ts` from writing generated icons into the repository's own source
++tree, and make it actually test the property it claims to test — that the checked-in
++`web/public/icons/*.png` are what the generator produces.
++
++Relevant Requirements:
++Correction for an OPTIONAL finding in `.harness/reviews/M10-cycle1.md` (fourth finding,
++"`test/icons.test.ts` calls `generateIcons()` with no `root`"). Read that finding in the
++report; it states the problem, the evidence and the suggested correction. Do not read the
++rest of the report.
++
++Acceptance Criteria:
++- Neither call to `generateIcons()` in `test/icons.test.ts` runs unrooted. Both pass an
++  explicit `{ root: <temp dir> }`. `scripts/generate-icons.ts:213-219` shows `root`
++  defaults to the repository when omitted — that default is what must no longer be hit
++  from the test suite.
++- Running `bun test` no longer modifies any file under `web/public/icons/`. Prove this:
++  record the three PNGs' mtimes and sha256 before a full `bun test`, and again after, and
++  show they are unchanged. Put that before/after evidence in your Summary. This is the
++  primary acceptance check and it must be demonstrated, not asserted.
++- The suite gains a real drift check: a test that reads the checked-in
++  `web/public/icons/*.png` bytes and asserts they equal bytes freshly generated into a
++  temp root, for all three icons. This test must be capable of failing — verify by
++  temporarily perturbing one checked-in PNG byte (or the freshly-generated comparison
++  buffer) in your working copy, observing the test fail, then restoring it. Report both
++  the failing and passing output. A test that cannot fail is the failure mode here.
++- Every temp dir the test creates is removed in a `finally`, following the pattern already
++  used by the existing "should generate deterministic icons" test at the end of the file.
++- No existing assertion is deleted or loosened. The existing PNG structural checks (chunk
++  walk, per-chunk CRC32, IHDR fields, IDAT inflate size, determinism) all remain and still
++  run — just against a temp root instead of the repository.
++- `web/public/icons/*.png` are NOT regenerated, rewritten or touched by you. If your work
++  accidentally rewrites them, restore them with `git`-free means is impossible (they are
++  untracked) — so simply do not run the generator against the default root at any point.
++
++Relevant Files:
++- `test/icons.test.ts` — the file to change. Two unrooted `generateIcons()` calls, around
++  lines 41 and 207.
++- `scripts/generate-icons.ts` — read `generateIcons`'s signature and its `root`/`outdir`
++  handling only. Do not change it.
++- `web/public/icons/icon-192.png`, `icon-512.png`, `apple-touch-icon-180.png` — read-only
++  inputs to the new drift check.
++
++Files Allowed To Change:
++- `test/icons.test.ts`
++
++Constraints:
++- Follow existing repository patterns (the file uses tabs; match it).
++- Do not change unrelated behaviour.
++- Do not introduce dependencies.
++- Do not weaken tests.
++- Do not modify `scripts/generate-icons.ts`. If you believe the generator needs a change to
++  make this possible, stop and report it under Unresolved Issues instead.
++- Do not run `git stash`, `git checkout --`, `git restore`, `git reset --hard` or
++  `git clean`. You share this working tree.
++
++Tests:
++`~/.bun/bin/bun test test/icons.test.ts` for the focused loop, then the full
++`~/.bun/bin/bun test` for the mtime/sha256 before-and-after evidence.
++Bun is NOT on PATH in non-interactive shells: use `~/.bun/bin/bun` or first
++`export PATH="$HOME/.bun/bin:$PATH"`. Node is not installed.
++
++Tier: Cheap. Routing reason: none — clearly specified, bounded to one test file, low risk
++(test-only), and settled by a command.
++
++Return:
++- Summary (including the mtime/sha256 before-and-after evidence and the deliberate-failure
++  evidence for the new drift check)
++- Files changed
++- Tests run
++- Test result
++- Unresolved issues
+diff --git a/test/icons.test.ts b/test/icons.test.ts
+index ce97e84..a7d0822 100644
+--- a/test/icons.test.ts
++++ b/test/icons.test.ts
+@@ -38,181 +38,229 @@ describe("icons", () => {
+ 	}
+ 
+ 	it("should generate valid PNG icons", async () => {
+-		const result = await generateIcons();
+-		const iconsDir = join(result.outdir, "web/public/icons");
+-
+-		// Test each icon
+-		for (const config of iconConfigs) {
+-			const filePath = join(iconsDir, config.filename);
+-			const data = readFileSync(filePath);
+-
+-			// Assert file exists and is larger than 100 bytes
+-			expect(data.length).toBeGreaterThan(100);
+-
+-			// Parse PNG header
+-			const view = new DataView(data.buffer, data.byteOffset, data.length);
+-
+-			// Validate 8-byte signature
+-			const sig = new Uint8Array(data.buffer, data.byteOffset, 8);
+-			expect(sig[0]).toBe(0x89);
+-			expect(sig[1]).toBe(0x50);
+-			expect(sig[2]).toBe(0x4e);
+-			expect(sig[3]).toBe(0x47);
+-			expect(sig[4]).toBe(0x0d);
+-			expect(sig[5]).toBe(0x0a);
+-			expect(sig[6]).toBe(0x1a);
+-			expect(sig[7]).toBe(0x0a);
+-
+-			// Parse chunks
+-			let offset = 8;
+-			let foundIDAT = false;
+-			let foundIEND = false;
+-			const idatDataArray: Uint8Array[] = [];
+-
+-			while (offset < data.length) {
+-				if (offset + 8 > data.length) {
+-					throw new Error("Unexpected EOF while reading chunk length");
+-				}
++		const tmpDir = `/tmp/test-icons-${Date.now()}-${Math.random()}`;
++		mkdirSync(tmpDir, { recursive: true });
+ 
+-				// Read chunk length (big-endian)
+-				const length = view.getUint32(offset, false);
+-				offset += 4;
++		try {
++			const result = await generateIcons({ root: tmpDir });
++			const iconsDir = join(result.outdir, "web/public/icons");
+ 
+-				if (offset + 4 + length > data.length) {
+-					throw new Error("Chunk extends beyond file");
+-				}
++			// Test each icon
++			for (const config of iconConfigs) {
++				const filePath = join(iconsDir, config.filename);
++				const data = readFileSync(filePath);
+ 
+-				// Read chunk type (4 bytes)
+-				const typeBytes = new Uint8Array(
+-					data.buffer,
+-					data.byteOffset + offset,
+-					4
+-				);
+-				const chunkType = String.fromCharCode(
+-					typeBytes[0] ?? 0,
+-					typeBytes[1] ?? 0,
+-					typeBytes[2] ?? 0,
+-					typeBytes[3] ?? 0
+-				);
+-				offset += 4;
++				// Assert file exists and is larger than 100 bytes
++				expect(data.length).toBeGreaterThan(100);
+ 
+-				// Read chunk data
+-				const chunkData = new Uint8Array(
+-					data.buffer,
+-					data.byteOffset + offset,
+-					length
+-				);
+-				offset += length;
++				// Parse PNG header
++				const view = new DataView(data.buffer, data.byteOffset, data.length);
+ 
+-				// Read and verify CRC32
+-				if (offset + 4 > data.length) {
+-					throw new Error("Unexpected EOF while reading chunk CRC");
+-				}
+-				const storedCrc = view.getUint32(offset, false);
+-				offset += 4;
+-
+-				// Compute CRC over chunk type + data
+-				const crcData = new Uint8Array(4 + length);
+-				for (let i = 0; i < 4; i++) {
+-					const byte = typeBytes[i];
+-					if (byte === undefined) {
+-						throw new Error("Unexpected undefined byte in type");
++				// Validate 8-byte signature
++				const sig = new Uint8Array(data.buffer, data.byteOffset, 8);
++				expect(sig[0]).toBe(0x89);
++				expect(sig[1]).toBe(0x50);
++				expect(sig[2]).toBe(0x4e);
++				expect(sig[3]).toBe(0x47);
++				expect(sig[4]).toBe(0x0d);
++				expect(sig[5]).toBe(0x0a);
++				expect(sig[6]).toBe(0x1a);
++				expect(sig[7]).toBe(0x0a);
++
++				// Parse chunks
++				let offset = 8;
++				let foundIDAT = false;
++				let foundIEND = false;
++				const idatDataArray: Uint8Array[] = [];
++
++				while (offset < data.length) {
++					if (offset + 8 > data.length) {
++						throw new Error("Unexpected EOF while reading chunk length");
+ 					}
+-					crcData[i] = byte;
+-				}
+-				for (let i = 0; i < length; i++) {
+-					const byte = chunkData[i];
+-					if (byte === undefined) {
+-						throw new Error("Unexpected undefined byte in chunk data");
++
++					// Read chunk length (big-endian)
++					const length = view.getUint32(offset, false);
++					offset += 4;
++
++					if (offset + 4 + length > data.length) {
++						throw new Error("Chunk extends beyond file");
+ 					}
+-					crcData[4 + i] = byte;
+-				}
+-				const computedCrc = computeCrc32(crcData);
+ 
+-				expect(storedCrc).toBe(computedCrc);
++					// Read chunk type (4 bytes)
++					const typeBytes = new Uint8Array(
++						data.buffer,
++						data.byteOffset + offset,
++						4
++					);
++					const chunkType = String.fromCharCode(
++						typeBytes[0] ?? 0,
++						typeBytes[1] ?? 0,
++						typeBytes[2] ?? 0,
++						typeBytes[3] ?? 0
++					);
++					offset += 4;
+ 
+-				// Handle IHDR chunk
+-				if (chunkType === "IHDR") {
+-					expect(length).toBe(13);
+-					const ihdrView = new DataView(
+-						chunkData.buffer,
+-						chunkData.byteOffset,
+-						13
++					// Read chunk data
++					const chunkData = new Uint8Array(
++						data.buffer,
++						data.byteOffset + offset,
++						length
+ 					);
+-					const width = ihdrView.getUint32(0, false);
+-					const height = ihdrView.getUint32(4, false);
+-					const bitDepth = chunkData[8];
+-					const colorType = chunkData[9];
+-					const compressionMethod = chunkData[10];
+-					const filterMethod = chunkData[11];
+-					const interlaceMethod = chunkData[12];
+-
+-					expect(width).toBe(config.width);
+-					expect(height).toBe(config.height);
+-					expect(bitDepth).toBe(8);
+-					expect(colorType).toBe(2); // RGB
+-					expect(compressionMethod).toBe(0); // deflate
+-					expect(filterMethod).toBe(0);
+-					expect(interlaceMethod).toBe(0); // no interlace
+-				}
++					offset += length;
+ 
+-				// Collect IDAT data
+-				if (chunkType === "IDAT") {
+-					foundIDAT = true;
+-					idatDataArray.push(chunkData);
+-				}
++					// Read and verify CRC32
++					if (offset + 4 > data.length) {
++						throw new Error("Unexpected EOF while reading chunk CRC");
++					}
++					const storedCrc = view.getUint32(offset, false);
++					offset += 4;
+ 
+-				// Check for IEND
+-				if (chunkType === "IEND") {
+-					foundIEND = true;
+-					expect(length).toBe(0);
+-				}
+-			}
++					// Compute CRC over chunk type + data
++					const crcData = new Uint8Array(4 + length);
++					for (let i = 0; i < 4; i++) {
++						const byte = typeBytes[i];
++						if (byte === undefined) {
++							throw new Error("Unexpected undefined byte in type");
++						}
++						crcData[i] = byte;
++					}
++					for (let i = 0; i < length; i++) {
++						const byte = chunkData[i];
++						if (byte === undefined) {
++							throw new Error("Unexpected undefined byte in chunk data");
++						}
++						crcData[4 + i] = byte;
++					}
++					const computedCrc = computeCrc32(crcData);
++
++					expect(storedCrc).toBe(computedCrc);
++
++					// Handle IHDR chunk
++					if (chunkType === "IHDR") {
++						expect(length).toBe(13);
++						const ihdrView = new DataView(
++							chunkData.buffer,
++							chunkData.byteOffset,
++							13
++						);
++						const width = ihdrView.getUint32(0, false);
++						const height = ihdrView.getUint32(4, false);
++						const bitDepth = chunkData[8];
++						const colorType = chunkData[9];
++						const compressionMethod = chunkData[10];
++						const filterMethod = chunkData[11];
++						const interlaceMethod = chunkData[12];
++
++						expect(width).toBe(config.width);
++						expect(height).toBe(config.height);
++						expect(bitDepth).toBe(8);
++						expect(colorType).toBe(2); // RGB
++						expect(compressionMethod).toBe(0); // deflate
++						expect(filterMethod).toBe(0);
++						expect(interlaceMethod).toBe(0); // no interlace
++					}
++
++					// Collect IDAT data
++					if (chunkType === "IDAT") {
++						foundIDAT = true;
++						idatDataArray.push(chunkData);
++					}
+ 
+-			// Verify we found at least one IDAT and that IEND is last
+-			expect(foundIDAT).toBe(true);
+-			expect(foundIEND).toBe(true);
+-
+-			// Verify IDAT decompression
+-			const idatBuffer = new Uint8Array(
+-				idatDataArray.reduce((sum, data) => sum + data.length, 0)
+-			);
+-			let pos = 0;
+-			for (const chunk of idatDataArray) {
+-				for (let i = 0; i < chunk.length; i++) {
+-					const byte = chunk[i];
+-					if (byte === undefined) {
+-						throw new Error("Unexpected undefined byte in IDAT");
++					// Check for IEND
++					if (chunkType === "IEND") {
++						foundIEND = true;
++						expect(length).toBe(0);
+ 					}
+-					idatBuffer[pos++] = byte;
+ 				}
+-			}
+ 
+-			const decompressed = inflateSync(idatBuffer);
+-			const expectedSize = config.height * (1 + config.width * 3);
+-			expect(decompressed.length).toBe(expectedSize);
++					// Verify we found at least one IDAT and that IEND is last
++					expect(foundIDAT).toBe(true);
++					expect(foundIEND).toBe(true);
++
++					// Verify IDAT decompression
++					const idatBuffer = new Uint8Array(
++						idatDataArray.reduce((sum, data) => sum + data.length, 0)
++					);
++					let pos = 0;
++					for (const chunk of idatDataArray) {
++						for (let i = 0; i < chunk.length; i++) {
++							const byte = chunk[i];
++							if (byte === undefined) {
++								throw new Error("Unexpected undefined byte in IDAT");
++							}
++							idatBuffer[pos++] = byte;
++						}
++					}
++
++					const decompressed = inflateSync(idatBuffer);
++					const expectedSize = config.height * (1 + config.width * 3);
++					expect(decompressed.length).toBe(expectedSize);
++			}
++		} finally {
++			// Cleanup
++			if (existsSync(tmpDir)) {
++				rmSync(tmpDir, { recursive: true, force: true });
++			}
+ 		}
+ 	});
+ 
+ 	it("should generate deterministic icons", async () => {
+-		// Generate to temp directory
++		// Generate to first temp directory
++		const tmpDir1 = `/tmp/test-icons-${Date.now()}-${Math.random()}`;
++		mkdirSync(tmpDir1, { recursive: true });
++
++		try {
++			const result1 = await generateIcons({ root: tmpDir1 });
++			const tempIconsDir1 = join(tmpDir1, "web/public/icons");
++
++			// Generate again to second temp directory
++			const tmpDir2 = `/tmp/test-icons-${Date.now()}-${Math.random()}-2`;
++			mkdirSync(tmpDir2, { recursive: true });
++
++			try {
++				const result2 = await generateIcons({ root: tmpDir2 });
++				const tempIconsDir2 = join(tmpDir2, "web/public/icons");
++
++				// Compare all icons between two generations
++				for (const config of iconConfigs) {
++					const file1 = readFileSync(join(tempIconsDir1, config.filename));
++					const file2 = readFileSync(join(tempIconsDir2, config.filename));
++					expect(file1.equals(file2)).toBe(true);
++				}
++			} finally {
++				// Cleanup second temp dir
++				if (existsSync(tmpDir2)) {
++					rmSync(tmpDir2, { recursive: true, force: true });
++				}
++			}
++		} finally {
++			// Cleanup first temp dir
++			if (existsSync(tmpDir1)) {
++				rmSync(tmpDir1, { recursive: true, force: true });
++			}
++		}
++	});
++
++	it("should match checked-in icons with generated ones", async () => {
++		// Generate icons to temp directory
+ 		const tmpDir = `/tmp/test-icons-${Date.now()}-${Math.random()}`;
+ 		mkdirSync(tmpDir, { recursive: true });
+ 
+ 		try {
+ 			const result = await generateIcons({ root: tmpDir });
+ 			const tempIconsDir = join(tmpDir, "web/public/icons");
++			const checkedInIconsDir = resolve(__dirname, "..", "web/public/icons");
+ 
+-			// Generate again to repository
+-			const repoResult = await generateIcons();
+-			const repoIconsDir = join(repoResult.outdir, "web/public/icons");
+-
+-			// Compare at least one icon
+-			const testIcon = "icon-192.png";
+-			const tempFile = readFileSync(join(tempIconsDir, testIcon));
+-			const repoFile = readFileSync(join(repoIconsDir, testIcon));
+-
+-			expect(tempFile.equals(repoFile)).toBe(true);
++			// Compare each icon
++			for (const config of iconConfigs) {
++				const checkedInFile = readFileSync(
++					join(checkedInIconsDir, config.filename)
++				);
++				const generatedFile = readFileSync(
++					join(tempIconsDir, config.filename)
++				);
++				expect(generatedFile.equals(checkedInFile)).toBe(true);
++			}
+ 		} finally {
+ 			// Cleanup
+ 			if (existsSync(tmpDir)) {
+diff --git a/test/web/manifest.test.ts b/test/web/manifest.test.ts
+index 2182d0d..e3f393b 100644
+--- a/test/web/manifest.test.ts
++++ b/test/web/manifest.test.ts
+@@ -94,14 +94,14 @@ describe("PWA Manifest", () => {
+     it("contains manifest link with correct href", () => {
+       const htmlContent = readFileSync(indexPath, "utf-8");
+       expect(htmlContent).toContain('rel="manifest"');
+-      expect(htmlContent).toContain('href="./app.webmanifest"');
++      expect(htmlContent).toContain('href="/app/app.webmanifest"');
+     });
+ 
+     it("contains apple-touch-icon link", () => {
+       const htmlContent = readFileSync(indexPath, "utf-8");
+       expect(htmlContent).toContain('rel="apple-touch-icon"');
+       expect(htmlContent).toContain('sizes="180x180"');
+-      expect(htmlContent).toContain('href="./icons/apple-touch-icon-180.png"');
++      expect(htmlContent).toContain('href="/app/icons/apple-touch-icon-180.png"');
+     });
+ 
+     it("contains apple-mobile-web-app-capable meta with content yes", () => {
+@@ -119,7 +119,13 @@ describe("PWA Manifest", () => {
+     it("still contains the main.js script tag", () => {
+       const htmlContent = readFileSync(indexPath, "utf-8");
+       expect(htmlContent).toContain('type="module"');
+-      expect(htmlContent).toContain('src="./main.js"');
++      expect(htmlContent).toContain('src="/app/main.js"');
++    });
++
++    it("does not contain any relative ./ paths in href or src attributes", () => {
++      const htmlContent = readFileSync(indexPath, "utf-8");
++      expect(htmlContent).not.toContain('href="./');
++      expect(htmlContent).not.toContain('src="./');
+     });
+   });
+ });
+diff --git a/test/web/sw.test.ts b/test/web/sw.test.ts
+index a6936f8..b3e40ed 100644
+--- a/test/web/sw.test.ts
++++ b/test/web/sw.test.ts
+@@ -252,6 +252,75 @@ describe("Service Worker", () => {
+ 
+       expect(body).toBe("OLD BUILD");
+     });
++
++    it("returns NEW BUILD even when cachePut rejects with a warm cache", async () => {
++      let cachedBody: string | null = "OLD BUILD";
++
++      const request = new Request("https://example.com/app/index.html");
++      const deps = {
++        fetch: async () => {
++          return createResponse("NEW BUILD", { status: 200, statusText: "OK" });
++        },
++        cacheMatch: async () =>
++          cachedBody !== null ? createResponse(cachedBody, { status: 200 }) : undefined,
++        cachePut: async (req: Request, res: Response) => {
++          // Simulate cache write failure (e.g., QuotaExceededError)
++          throw new Error("QuotaExceededError");
++        },
++      };
++
++      const response = await handleShellRequest(request, deps);
++      const body = await response.text();
++
++      expect(body).toBe("NEW BUILD");
++      expect(response.ok).toBe(true);
++    });
++
++    it("resolves with NEW BUILD when cachePut rejects and cache is empty", async () => {
++      const request = new Request("https://example.com/app/index.html");
++      const deps = {
++        fetch: async () => {
++          return createResponse("NEW BUILD", { status: 200, statusText: "OK" });
++        },
++        cacheMatch: async () => undefined,
++        cachePut: async (req: Request, res: Response) => {
++          // Simulate cache write failure
++          throw new Error("QuotaExceededError");
++        },
++      };
++
++      const response = await handleShellRequest(request, deps);
++      const body = await response.text();
++
++      expect(body).toBe("NEW BUILD");
++      expect(response.ok).toBe(true);
++    });
++
++    it("returns NEW BUILD even when cachePut throws synchronously with a warm cache", async () => {
++      let cachedBody: string | null = "OLD BUILD";
++
++      const request = new Request("https://example.com/app/index.html");
++
++      // Define a function that throws synchronously
++      function throwingCachePut(req: Request, res: Response): any {
++        throw new Error("SyncError");
++      }
++
++      const deps = {
++        fetch: async () => {
++          return createResponse("NEW BUILD", { status: 200, statusText: "OK" });
++        },
++        cacheMatch: async () =>
++          cachedBody !== null ? createResponse(cachedBody, { status: 200 }) : undefined,
++        cachePut: throwingCachePut as any,
++      };
++
++      const response = await handleShellRequest(request, deps);
++      const body = await response.text();
++
++      expect(body).toBe("NEW BUILD");
++      expect(response.ok).toBe(true);
++    });
+   });
+ 
+   describe("staleCacheNames", () => {
+diff --git a/web/public/index.html b/web/public/index.html
+index 3c6eb3a..bf24f92 100644
+--- a/web/public/index.html
++++ b/web/public/index.html
+@@ -17,8 +17,8 @@
+ 			max-width: 100%;
+ 		}
+ 	</style>
+-	<link rel="manifest" href="./app.webmanifest">
+-	<link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon-180.png">
++	<link rel="manifest" href="/app/app.webmanifest">
++	<link rel="apple-touch-icon" sizes="180x180" href="/app/icons/apple-touch-icon-180.png">
+ 	<meta name="apple-mobile-web-app-capable" content="yes">
+ 	<meta name="mobile-web-app-capable" content="yes">
+ 	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+@@ -27,6 +27,6 @@
+ </head>
+ <body>
+ 	<main id="app">Loading app shell...</main>
+-	<script type="module" src="./main.js"></script>
++	<script type="module" src="/app/main.js"></script>
+ </body>
+ </html>
+diff --git a/web/src/sw.ts b/web/src/sw.ts
+index ead324e..c42631d 100644
+--- a/web/src/sw.ts
++++ b/web/src/sw.ts
+@@ -48,9 +48,14 @@ export async function handleShellRequest(
+     const networkResponse = await deps.fetch(request);
+ 
+     if (networkResponse.ok) {
+-      // Cache the successful response (clone it first)
+-      await deps.cachePut(request, networkResponse.clone());
+-      // Return the original response
++      // A cache write is an optimisation and must never be able to fail a
++      // request that already succeeded on the network.
++      try {
++        await deps.cachePut(request, networkResponse.clone());
++      } catch {
++        // Cache write failed (e.g. QuotaExceededError). Ignore it and return
++        // the fresh response regardless.
++      }
+       return networkResponse;
+     }
+ 

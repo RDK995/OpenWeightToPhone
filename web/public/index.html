@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<title>Phone Reasoning Surface</title>
+	<style>
+		* {
+			box-sizing: border-box;
+		}
+		body {
+			font-family: system-ui, -apple-system, sans-serif;
+			margin: 0;
+			padding-top: max(1rem, env(safe-area-inset-top));
+			padding-right: max(1rem, env(safe-area-inset-right));
+			padding-bottom: max(1rem, env(safe-area-inset-bottom));
+			padding-left: max(1rem, env(safe-area-inset-left));
+		}
+		main {
+			max-width: 100%;
+		}
+	</style>
+	<link rel="manifest" href="/app/app.webmanifest">
+	<link rel="apple-touch-icon" sizes="180x180" href="/app/icons/apple-touch-icon-180.png">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Reasoning">
+	<meta name="theme-color" content="#111111">
+</head>
+<body>
+	<main id="app">Loading app shell...</main>
+	<script type="module" src="/app/main.js"></script>
+</body>
+</html>

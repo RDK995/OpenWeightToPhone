@@ -1,0 +1,1272 @@
+diff --git a/.gitignore b/.gitignore
+index 0628b5f..10284da 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -2,3 +2,4 @@ node_modules/
+ web/dist/
+ *.log
+ .DS_Store
++*.bak
+diff --git a/.harness/tasks/M13-C1-remove-bak.md b/.harness/tasks/M13-C1-remove-bak.md
+new file mode 100644
+index 0000000..f7602bc
+--- /dev/null
++++ b/.harness/tasks/M13-C1-remove-bak.md
+@@ -0,0 +1,54 @@
++# Task M13-C1 — Remove the stray `dom-target.ts.bak` debris
++
++## Context
++
++This is a **correction task** answering an IMPORTANT finding from the M13 cycle-1 review.
++Read the finding at `.harness/reviews/M13-cycle1.md` — the first IMPORTANT finding, headed
++"An untracked leftover file, `web/src/ui/dom-target.ts.bak`". Do not re-derive it; the
++report states the problem and the suggested correction.
++
++Routing: **Cheap tier.** None of the four escalation reasons applies — the change is fully
++specified, its blast radius is one untracked debris file, being wrong is trivially
++detectable, and the validation is a full test run.
++
++## Goal
++
++Delete `web/src/ui/dom-target.ts.bak`, and add a `.gitignore` rule so backup files of this
++shape cannot silently reappear in a future revert-and-measure experiment.
++
++## Acceptance Criteria
++
++1. `web/src/ui/dom-target.ts.bak` no longer exists on disk.
++2. No other `.bak` / `.orig` / `.rej` debris exists anywhere under `web/`, `src/`, `test/`
++   or `scripts/`. Check with `find`; delete any you find and say which in your return.
++3. `.gitignore` gains `*.bak` (and only that — do not reorganise the file).
++4. `web/src/ui/dom-target.ts` itself is **completely untouched**. Confirm this by recording
++   its `md5` before and after your change and showing both in your return; they must match.
++5. `bun test` passes with the same count as before (852 pass, 0 fail) and exits 0.
++6. `bun x tsc --noEmit` exits 0.
++
++## Files Allowed To Change
++
++- `web/src/ui/dom-target.ts.bak` (delete only)
++- `.gitignore`
++- any other `*.bak`/`*.orig`/`*.rej` file you find under the directories in AC2 (delete only)
++
++Nothing else. In particular do NOT touch `web/src/ui/dom-target.ts`,
++`web/src/ui/view-model.ts`, any test file, or anything under `.harness/`.
++
++## Tests
++
++`bun` is at `~/.bun/bin/bun` and is NOT on PATH in non-interactive shells. Prefix your
++commands with `export PATH="$HOME/.bun/bin:$PATH";`.
++
++```
++bun test
++bun x tsc --noEmit
++```
++
++Report the exact command, its exit status, and the pass/fail counts you actually saw.
++
++## Notes
++
++Do not commit anything. Do not run `git stash`, `git checkout`, `git restore` or `git clean`
++— the whole working tree is uncommitted work and those commands would destroy it.
+diff --git a/.harness/tasks/M13-C2-live-harness-proof.md b/.harness/tasks/M13-C2-live-harness-proof.md
+new file mode 100644
+index 0000000..891af38
+--- /dev/null
++++ b/.harness/tasks/M13-C2-live-harness-proof.md
+@@ -0,0 +1,114 @@
++# Task M13-C2 — Add `src/host/m13-proof.ts`: the live-harness proof for M13's criterion 2
++
++## Context
++
++This is a **correction task** answering the second IMPORTANT finding of the M13 cycle-1
++review. Read it at `.harness/reviews/M13-cycle1.md` — the finding headed "The live-harness
++clause of acceptance criterion 2 ... was recorded as unproven this phase".
++
++The milestone recorded that the harness was unreachable. **That was wrong.** The orchestrator
++has re-probed it: both `http://127.0.0.1:7787/v1/profiles` and the default base URL
++`https://ryans-mac-studio.tailc3648a.ts.net/v1/profiles` return HTTP `401` (harness up,
++auth required), and `~/.openweight-harness/token` exists with mode 600. This machine is the
++Mac Studio. `OPENWEIGHT_HARNESS_BASE_URL` is unset, so `resolveBaseUrl()`'s default is
++correct and you must NOT set that variable — use the project's own config helpers unchanged.
++
++Routing: **Mid tier.** NOT CLEARLY SPECIFIED and NOT EASILY VERIFIED — exactly where a
++transport failure must be injected inside the real client/coordinator streaming path (and
++how to un-inject it for the retry) is not derivable from this packet and requires reading
++`web/src/api-client.ts` and `web/src/session-coordinator.ts`; and a live-network proof can
++pass for the wrong reason (never actually reaching the harness) unless it asserts positively
++that it did.
++
++## Goal
++
++Add `src/host/m13-proof.ts` and a `"proof:m13"` script to `package.json`, following the
++established per-milestone live-proof convention, proving M13's acceptance criterion 2
++end to end against the **live** harness.
++
++## The convention you must follow
++
++`src/host/m12b-proof.ts` is the closest template and the most recent one — **read it first**
++and match its shape: a `happy-dom` `Window`, `resolveBaseUrl()`/`readToken()` from
++`./config.ts`, the real `createApiClient` / `createConversationStore` /
++`createSessionCoordinator` / `createDomTarget` / `mount` imported from `../../web/src/...`,
++a fetch wrapper around `globalThis.fetch`, a `waitForCondition` poller, an accumulating
++`failures: string[]`, per-assertion `PASS` logging, and a final
++`M13 LIVE PROOF: PASS` / `FAIL` banner with `process.exit(0)` / `process.exit(1)` and an
++`if (import.meta.main)` entry point.
++
++Drive the interaction **through the UI's own DOM**, as `m12b-proof.ts` does — click the
++`data-testid="send"` button and the `data-testid="retry"` button, do not call the coordinator
++directly. That is what makes this a proof of the shipped path rather than of a helper.
++
++## Acceptance Criteria
++
++The proof script must assert, in order, and fail loudly if any does not hold:
++
++1. **Setup is live.** It reaches the real harness at `resolveBaseUrl()` with the real token
++   and lists real profiles / creates a real conversation. If the harness is unreachable it
++   must exit **non-zero** with a clear message — it must never "pass" by skipping.
++2. **Injected transport failure.** With a prompt typed into `data-testid="prompt-input"` and
++   the send button clicked, a transport-layer failure injected on the `generate` call only
++   (reject with `TypeError("Failed to fetch")` — a rejected fetch, NOT a synthesized HTTP
++   error response or a `{code: ...}` body) produces:
++   - the `data-testid="offline"` section present in the DOM;
++   - the generic `data-testid="status"` element NOT showing a harness error code;
++   - the drafted prompt still present in the prompt input.
++3. **No turn leaked.** After that failed attempt, the conversation holds **zero** user turns
++   and **zero** assistant turns. Assert the count explicitly, from the conversation store.
++4. **Live retry succeeds.** With the injection removed so fetch reaches the network again,
++   clicking `data-testid="retry"` re-sends the preserved draft and the generation reaches
++   `complete` **against the live harness** — assert on real telemetry actually returned by
++   the harness (e.g. a numeric `tokens_per_second` > 0 and a non-empty `profile_id`), not on
++   a locally-constructed value. This is the clause the milestone left unproven; it is the
++   point of the whole task.
++5. **Exactly one user turn and one assistant turn** exist afterwards, and the assistant turn
++   has non-empty text.
++6. The proof asserts the retry sent the **preserved draft** — capture the request body of the
++   successful `generate` call through the fetch wrapper and assert its prompt equals the
++   originally-typed text. The human did not retype it.
++
++Plus:
++
++7. `package.json` gains `"proof:m13": "bun run src/host/m13-proof.ts"` placed immediately
++   after `"proof:m12b"`, matching the existing formatting exactly. Change nothing else in
++   that file.
++8. `bun x tsc --noEmit` exits 0.
++9. `bun test` exits 0 with **854 pass, 0 fail** (do not change the test count — this task
++   adds no unit tests; the proof script is the artifact).
++10. `bun run proof:m13` **actually runs and exits 0**, against the live harness. Paste its
++    full stdout into your return. A proof you did not run is not a proof.
++
++## Files Allowed To Change
++
++- `src/host/m13-proof.ts` (new)
++- `package.json`
++
++Nothing else. Do NOT modify `web/src/ui/dom-target.ts`, `web/src/ui/view-model.ts`,
++`web/src/api-client.ts`, `web/src/session-coordinator.ts`, `web/src/ui/mount.ts`, any test
++file, or anything under `.harness/`. If you believe production code must change for the
++proof to work, **stop and say so in your return** rather than changing it — that is an
++orchestrator decision, not yours.
++
++## Tests
++
++`bun` is at `~/.bun/bin/bun` and is NOT on PATH in non-interactive shells. Prefix your
++commands with `export PATH="$HOME/.bun/bin:$PATH";`.
++
++```
++bun run proof:m13
++bun x tsc --noEmit
++bun test
++```
++
++Report the exact commands, their exit statuses, and the output you actually saw.
++
++## Notes
++
++- Generation against a live local model takes real time. Give the completion poller a
++  generous timeout (60s or more) and keep the prompt very short (e.g. "Reply with the single
++  word: ready") so the run is quick and cheap.
++- Do not commit anything. Do not run `git stash`, `git checkout`, `git restore` or
++  `git clean` — the whole working tree is uncommitted work and those commands would destroy
++  it.
+diff --git a/.harness/tasks/M13-C3-prompt-input-snapshot.md b/.harness/tasks/M13-C3-prompt-input-snapshot.md
+new file mode 100644
+index 0000000..531354d
+--- /dev/null
++++ b/.harness/tasks/M13-C3-prompt-input-snapshot.md
+@@ -0,0 +1,85 @@
++# Task M13-C3 — Do not clear the prompt input if the human typed into it mid-send
++
++## Context
++
++This is a **correction task** answering the OPTIONAL finding from the M13 cycle-1 review.
++Read it at `.harness/reviews/M13-cycle1.md` — the finding headed
++"`promptInput.value = ""` in `doSend`'s success `.then()`". The orchestrator has elected to
++take this finding rather than defer it: it is the same class of silent-data-loss defect that
++M13-T1 was written to eliminate on the failure path, left open on the success path.
++
++Routing: **Cheap tier.** None of the four escalation reasons applies — the correction is
++stated precisely below, it is confined to one function in one file, a mistake is caught by
++the existing 852-test suite, and there is a clear test oracle.
++
++## Goal
++
++In `web/src/ui/dom-target.ts`, make `doSend`'s success branch clear the prompt input **only
++when the input still holds what was sent**. If the human typed new text into the box while a
++send or retry was in flight, that new text must survive the send completing.
++
++## How
++
++`doSend(conversationId, prompt)` is called from two places: the send button (where
++`promptInput.value` holds the raw text whose trimmed form is `prompt`) and the retry button
++(where `promptInput.value` holds the preserved draft). In both cases the input's value **at
++the moment `doSend` is entered** is the text the send is consuming.
++
++So: capture `promptInput.value` into a local `const` at the top of `doSend`, and in the
++success `.then()` replace the unconditional `promptInput.value = "";` with a guard that
++clears only if `promptInput.value` is still exactly equal to that captured snapshot.
++
++Do not disable the input; do not change the `.catch()` branch; do not change the trimming
++behaviour; do not change what `doSend` sends. `prompt` remains the trimmed string.
++
++Add a short comment saying why the guard exists, matching the house style of the existing
++M13-T1 comment directly above the line you are changing.
++
++## Acceptance Criteria
++
++1. A send that succeeds with the input untouched still clears the input (existing behaviour
++   preserved — there are existing tests asserting this; they must still pass unmodified).
++2. A **new test** in `test/web/ui/dom-target.test.ts`: drive a real send through the real
++   mount/paint path where the send's promise is still pending; while it is in flight, set
++   `promptInput.value` to different, newly-typed text; then let the send resolve
++   successfully. Assert the input still holds the newly-typed text — it was not cleared.
++3. A **new test**: the offline-retry path — after an offline failure the draft is preserved,
++   the human does NOT retype, retry succeeds, and the input IS cleared (the retry consumed
++   the draft that was in the box). This guards against the guard being too aggressive.
++4. Both new tests fail against the current unguarded code. **Verify this yourself**: apply
++   your tests first, run them against the unmodified `dom-target.ts`, record the failure
++   output, then apply the fix and record the pass. Report both in your return. A test that
++   passes before the fix proves nothing.
++5. No existing test is weakened, skipped, deleted, or has an assertion loosened.
++6. `bun test` exits 0 with 854 pass, 0 fail (852 + your 2 new tests).
++7. `bun x tsc --noEmit` exits 0.
++
++Follow Red -> Green -> Refactor: write the failing tests first (AC4 makes that explicit).
++
++## Files Allowed To Change
++
++- `web/src/ui/dom-target.ts`
++- `test/web/ui/dom-target.test.ts`
++
++Nothing else. Do NOT touch `web/src/ui/view-model.ts`, `web/src/session-coordinator.ts`,
++`web/src/api-client.ts`, `web/src/ui/mount.ts`, any file under `src/host/`, `package.json`,
++or anything under `.harness/`.
++
++## Tests
++
++`bun` is at `~/.bun/bin/bun` and is NOT on PATH in non-interactive shells. Prefix your
++commands with `export PATH="$HOME/.bun/bin:$PATH";`.
++
++```
++bun test test/web/ui/dom-target.test.ts
++bun test
++bun x tsc --noEmit
++```
++
++Report the exact commands, their exit statuses, and the pass/fail counts you actually saw —
++both for the pre-fix (red) run and the post-fix (green) run.
++
++## Notes
++
++Do not commit anything. Do not run `git stash`, `git checkout`, `git restore` or `git clean`
++— the whole working tree is uncommitted work and those commands would destroy it.
+diff --git a/package.json b/package.json
+index bef216f..4d4daa2 100644
+--- a/package.json
++++ b/package.json
+@@ -20,7 +20,8 @@
+     "proof:m11": "bun run src/host/m11-proof.ts",
+     "proof:m12": "bun run src/host/m12-proof.ts",
+     "proof:m12a": "bun run src/host/m12a-proof.ts",
+-    "proof:m12b": "bun run src/host/m12b-proof.ts"
++    "proof:m12b": "bun run src/host/m12b-proof.ts",
++    "proof:m13": "bun run src/host/m13-proof.ts"
+   },
+   "devDependencies": {
+     "@types/bun": "latest",
+diff --git a/src/host/m13-proof.ts b/src/host/m13-proof.ts
+new file mode 100644
+index 0000000..ec196c2
+--- /dev/null
++++ b/src/host/m13-proof.ts
+@@ -0,0 +1,407 @@
++// M13 live proof: demonstrates acceptance criterion 2 end to end against the
++// live harness -- a transport-layer failure injected on the `generate` call
++// (a rejected fetch, not a synthesized HTTP error) produces a distinct
++// offline state with the drafted prompt preserved and no turn recorded, and
++// a subsequent retry with the injection removed re-sends the exact preserved
++// draft and completes against the real harness, with real telemetry
++// (tokens_per_second, profile_id) returned on the wire.
++//
++// Driven through the UI's own send/retry buttons with the real API client,
++// real coordinator and a real token against the live harness. Proven at a
++// Mac-run entry point under happy-dom -- no browser required.
++
++import { Window } from "happy-dom";
++import { resolveBaseUrl, readToken } from "./config.ts";
++import { createMemoryStorage } from "../../web/src/storage-port.ts";
++import { createApiClient } from "../../web/src/api-client.ts";
++import { createConversationStore } from "../../web/src/conversation-store.ts";
++import { createSessionCoordinator } from "../../web/src/session-coordinator.ts";
++import { createDomTarget } from "../../web/src/ui/dom-target.ts";
++import { mount } from "../../web/src/ui/mount.ts";
++import { readEvents, type Telemetry } from "../../web/src/sse-reader.ts";
++
++interface RecordedRequest {
++  method: string;
++  url: string;
++  body: string | null;
++}
++
++async function waitForCondition(
++  condition: () => boolean,
++  timeout: number = 10000,
++  intervalMs: number = 100
++): Promise<boolean> {
++  const start = Date.now();
++  while (Date.now() - start < timeout) {
++    if (condition()) {
++      return true;
++    }
++    await new Promise((resolve) => setTimeout(resolve, intervalMs));
++  }
++  return false;
++}
++
++async function main() {
++  const baseUrl = resolveBaseUrl();
++  const token = readToken();
++
++  console.log(`Base URL: ${baseUrl}`);
++
++  let allPassed = true;
++  const failures: string[] = [];
++
++  try {
++    // Create happy-dom window
++    const w = new Window() as any;
++    const root = w.document.body as HTMLElement;
++
++    // Records every request the app actually sent, and lets us inject a
++    // transport-layer failure on the generate call only (and remove it
++    // again for the retry) without touching any real production file.
++    const requests: RecordedRequest[] = [];
++    let injectGenerateFailure = false;
++    let capturedTelemetry: Telemetry | null = null;
++
++    const wrappingFetch = async (input: any, init?: any) => {
++      const url = typeof input === "string" ? input : input.url;
++      const method = init?.method || "GET";
++      const body = init?.body || null;
++      const isGenerateCall = method === "POST" && url.includes("/generate");
++
++      requests.push({
++        method,
++        url,
++        body: typeof body === "string" ? body : null,
++      });
++
++      if (isGenerateCall && injectGenerateFailure) {
++        // A rejected fetch -- exactly what a dropped connection/DNS
++        // failure looks like at this layer. NOT a synthesized HTTP error
++        // response and NOT a `{code: ...}` body.
++        throw new TypeError("Failed to fetch");
++      }
++
++      const response = await globalThis.fetch(input, init);
++
++      if (isGenerateCall && response.ok && response.body) {
++        // Independently tap a clone of the real SSE stream to capture the
++        // telemetry actually returned by the harness, without disturbing
++        // the response the app itself consumes.
++        const tapped = response.clone();
++        if (tapped.body) {
++          (async () => {
++            try {
++              for await (const event of readEvents(tapped.body!)) {
++                if (event.kind === "complete") {
++                  capturedTelemetry = event.telemetry;
++                }
++              }
++            } catch {
++              // Best-effort tap; the app's own consumption is authoritative.
++            }
++          })();
++        }
++      }
++
++      return response;
++    };
++
++    // Build module chain
++    const storage = createMemoryStorage();
++    const conversationStore = createConversationStore(storage);
++
++    const apiClient = createApiClient({
++      baseUrl,
++      getToken: () => token,
++      fetch: wrappingFetch as any,
++    });
++
++    const sessionCoordinator = createSessionCoordinator({
++      apiClient,
++      conversationStore,
++    });
++
++    const target = createDomTarget(root);
++
++    const handle = mount({
++      target,
++      coordinator: sessionCoordinator,
++      store: conversationStore,
++    });
++
++    target.attach({
++      actions: handle.actions,
++      controller: handle,
++    });
++
++    // --- Criterion 1: setup is live -------------------------------------
++    console.log("\n=== Criterion 1: setup is live ===");
++    let profiles;
++    try {
++      profiles = await apiClient.listProfiles();
++    } catch (error) {
++      console.log(
++        `FAIL - Setup: could not reach the live harness at ${baseUrl}: ${(error as Error).message}`
++      );
++      process.exit(1);
++    }
++
++    if (!profiles || profiles.length === 0) {
++      console.log(`FAIL - Setup: harness at ${baseUrl} returned zero profiles`);
++      process.exit(1);
++    }
++    console.log(`PASS - Listed ${profiles.length} real profile(s) from ${baseUrl}`);
++
++    const profile = profiles.find((p) => p.latency_class === "interactive") ?? profiles[0]!;
++    console.log(`Using profile: ${profile.id}`);
++
++    handle.setProfiles(profiles);
++    handle.render();
++
++    const profileSelect = root.querySelector('[data-testid="profile-select"]') as HTMLSelectElement | null;
++    if (!profileSelect) {
++      console.log("FAIL - Setup: profile-select not found in DOM");
++      process.exit(1);
++    }
++    profileSelect.value = profile.id;
++
++    const createBtn = root.querySelector('[data-testid="create-conversation"]') as HTMLButtonElement | null;
++    if (!createBtn) {
++      console.log("FAIL - Setup: create-conversation button not found in DOM");
++      process.exit(1);
++    }
++    createBtn.dispatchEvent(new w.Event("click", { bubbles: true }));
++
++    const conversationCreated = await waitForCondition(() => {
++      return root.querySelector('[data-testid="open-conversation"]') !== null;
++    });
++    if (!conversationCreated) {
++      console.log("FAIL - Setup: could not reach the live harness -- no conversation created (open-conversation button never appeared)");
++      process.exit(1);
++    }
++
++    const conversations = conversationStore.loadConversations();
++    const conversation = conversations[0];
++    if (!conversation) {
++      console.log("FAIL - Setup: conversation not found after creation");
++      process.exit(1);
++    }
++    console.log(`PASS - Created a real conversation on the live harness: ${conversation.id}`);
++
++    // --- Criterion 2: injected transport failure -------------------------
++    console.log("\n=== Criterion 2: injected transport failure ===");
++    const prompt = "Reply with the single word: ready";
++    const promptInput = root.querySelector('[data-testid="prompt-input"]') as HTMLTextAreaElement | null;
++    if (!promptInput) {
++      console.log("FAIL - prompt-input not found in DOM");
++      process.exit(1);
++    }
++    promptInput.value = prompt;
++
++    const sendBtn = root.querySelector('[data-testid="send"]') as HTMLButtonElement | null;
++    if (!sendBtn) {
++      console.log("FAIL - send button not found in DOM");
++      process.exit(1);
++    }
++
++    injectGenerateFailure = true;
++    console.log(`Prompt typed: "${prompt}"`);
++    console.log("Clicking send with a transport failure injected on generate...");
++    sendBtn.dispatchEvent(new w.Event("click", { bubbles: true }));
++
++    const offlineAppeared = await waitForCondition(() => {
++      const el = root.querySelector('[data-testid="offline"]');
++      return el !== null && (el.textContent ?? "").length > 0;
++    }, 15000, 200);
++
++    if (!offlineAppeared) {
++      failures.push("Offline state did not appear in the DOM after the injected transport failure");
++      allPassed = false;
++    } else {
++      console.log("PASS - data-testid=\"offline\" section is present and populated");
++    }
++
++    const offlineEl = root.querySelector('[data-testid="offline"]');
++    const offlineText = (offlineEl?.textContent ?? "") as string;
++    if (offlineText.length === 0) {
++      failures.push("Offline section has no text content");
++      allPassed = false;
++    }
++
++    const statusEl = root.querySelector('[data-testid="status"]');
++    const statusText = (statusEl?.textContent ?? "") as string;
++    console.log(`Status text: "${statusText}"`);
++    if (statusText !== "Offline") {
++      failures.push(`Status element should read exactly "Offline" with no harness error code, but read: "${statusText}"`);
++      allPassed = false;
++    } else {
++      console.log('PASS - status element reads "Offline" with no harness error code');
++    }
++
++    if (promptInput.value !== prompt) {
++      failures.push(`Drafted prompt was not preserved in the prompt input after the offline failure (found: "${promptInput.value}")`);
++      allPassed = false;
++    } else {
++      console.log("PASS - drafted prompt is still present in the prompt input");
++    }
++
++    // --- Criterion 3: no turn leaked -------------------------------------
++    console.log("\n=== Criterion 3: no turn leaked ===");
++    const afterFailureConversation = conversationStore.getConversation(conversation.id);
++    const userTurnsAfterFailure = (afterFailureConversation?.turns ?? []).filter((t) => t.role === "user");
++    const assistantTurnsAfterFailure = (afterFailureConversation?.turns ?? []).filter((t) => t.role === "assistant");
++    console.log(`User turns: ${userTurnsAfterFailure.length}, assistant turns: ${assistantTurnsAfterFailure.length}`);
++
++    if (userTurnsAfterFailure.length !== 0) {
++      failures.push(`Expected zero user turns after the failed attempt, found ${userTurnsAfterFailure.length}`);
++      allPassed = false;
++    }
++    if (assistantTurnsAfterFailure.length !== 0) {
++      failures.push(`Expected zero assistant turns after the failed attempt, found ${assistantTurnsAfterFailure.length}`);
++      allPassed = false;
++    }
++    if (userTurnsAfterFailure.length === 0 && assistantTurnsAfterFailure.length === 0) {
++      console.log("PASS - no turn leaked into the conversation store");
++    }
++
++    // --- Criterion 4: live retry succeeds ---------------------------------
++    console.log("\n=== Criterion 4: live retry succeeds against the live harness ===");
++    injectGenerateFailure = false;
++
++    const retryBtn = root.querySelector('[data-testid="retry"]') as HTMLButtonElement | null;
++    if (!retryBtn) {
++      console.log("FAIL - retry button not found in DOM while offline state is active");
++      process.exit(1);
++    }
++
++    console.log("Clicking retry with the injection removed...");
++    retryBtn.dispatchEvent(new w.Event("click", { bubbles: true }));
++
++    const completed = await waitForCondition(() => {
++      return handle.getState().generation.kind === "complete" || handle.getState().generation.kind === "error";
++    }, 90000, 500);
++
++    const finalGeneration = handle.getState().generation;
++    console.log(`Final generation kind: ${finalGeneration.kind}`);
++
++    if (!completed) {
++      failures.push("Retry did not reach a terminal state within 90 seconds");
++      allPassed = false;
++    } else if (finalGeneration.kind !== "complete") {
++      failures.push(`Retry did not reach "complete" -- reached "${finalGeneration.kind}" instead`);
++      allPassed = false;
++    } else {
++      console.log('PASS - retry reached "complete" against the live harness');
++    }
++
++    // Give the independent telemetry tap a moment to finish draining the
++    // cloned stream after the app itself has already reached "complete".
++    await waitForCondition(() => capturedTelemetry !== null, 5000, 100);
++
++    if (!capturedTelemetry) {
++      failures.push("No telemetry was captured off the wire for the retried generation");
++      allPassed = false;
++    } else {
++      const telemetry = capturedTelemetry as Telemetry;
++      console.log(`Real telemetry: tokens_per_second=${telemetry.tokens_per_second}, profile_id=${telemetry.profile_id}`);
++
++      if (typeof telemetry.tokens_per_second !== "number" || !(telemetry.tokens_per_second > 0)) {
++        failures.push(`Expected tokens_per_second > 0 from real telemetry, got ${telemetry.tokens_per_second}`);
++        allPassed = false;
++      } else {
++        console.log("PASS - real telemetry reports tokens_per_second > 0");
++      }
++
++      if (typeof telemetry.profile_id !== "string" || telemetry.profile_id.trim() === "") {
++        failures.push(`Expected a non-empty profile_id from real telemetry, got "${telemetry.profile_id}"`);
++        allPassed = false;
++      } else {
++        console.log(`PASS - real telemetry reports a non-empty profile_id (${telemetry.profile_id})`);
++      }
++    }
++
++    // --- Criterion 5: exactly one user turn and one assistant turn --------
++    console.log("\n=== Criterion 5: exactly one user turn and one assistant turn ===");
++    const finalConversation = conversationStore.getConversation(conversation.id);
++    const userTurnsFinal = (finalConversation?.turns ?? []).filter((t) => t.role === "user");
++    const assistantTurnsFinal = (finalConversation?.turns ?? []).filter((t) => t.role === "assistant");
++    console.log(`User turns: ${userTurnsFinal.length}, assistant turns: ${assistantTurnsFinal.length}`);
++
++    if (userTurnsFinal.length !== 1) {
++      failures.push(`Expected exactly one user turn after the retry, found ${userTurnsFinal.length}`);
++      allPassed = false;
++    } else {
++      console.log("PASS - exactly one user turn exists");
++    }
++
++    if (assistantTurnsFinal.length !== 1) {
++      failures.push(`Expected exactly one assistant turn after the retry, found ${assistantTurnsFinal.length}`);
++      allPassed = false;
++    } else {
++      const assistantText = assistantTurnsFinal[0]?.content ?? "";
++      if (assistantText.trim() === "") {
++        failures.push("The assistant turn's text is empty");
++        allPassed = false;
++      } else {
++        console.log(`PASS - exactly one assistant turn exists with non-empty text: "${assistantText}"`);
++      }
++    }
++
++    // --- Criterion 6: retry sent the preserved draft -----------------------
++    console.log("\n=== Criterion 6: retry sent the preserved draft ===");
++    const generateRequests = requests.filter(
++      (req) => req.method === "POST" && req.url.includes("/v1/sessions/") && req.url.includes("/generate")
++    );
++    console.log(`Recorded ${generateRequests.length} POST .../generate request(s) (failed + retried)`);
++
++    if (generateRequests.length < 2) {
++      failures.push(`Expected at least 2 recorded generate requests (the failed attempt and the retry), found ${generateRequests.length}`);
++      allPassed = false;
++    } else {
++      const retryRequest = generateRequests[generateRequests.length - 1]!;
++      if (!retryRequest.body) {
++        failures.push("The retried generate request has no recorded body");
++        allPassed = false;
++      } else {
++        try {
++          const bodyObj = JSON.parse(retryRequest.body) as any;
++          console.log(`Retried generate request body: ${JSON.stringify(bodyObj)}`);
++          if (bodyObj.prompt === prompt) {
++            console.log("PASS - retry sent the exact preserved draft, not a retyped prompt");
++          } else {
++            failures.push(`Retried generate request prompt "${bodyObj.prompt}" does not equal the originally-typed text "${prompt}"`);
++            allPassed = false;
++          }
++        } catch (e) {
++          failures.push(`Could not parse retried generate request body: ${retryRequest.body}`);
++          allPassed = false;
++        }
++      }
++    }
++
++    // Final result
++    console.log("\n" + "=".repeat(50));
++    if (allPassed) {
++      console.log("M13 LIVE PROOF: PASS");
++      process.exit(0);
++    } else {
++      console.log("M13 LIVE PROOF: FAIL");
++      console.log("\nFAILED ASSERTIONS:");
++      for (const failure of failures) {
++        console.log(`- ${failure}`);
++      }
++      process.exit(1);
++    }
++  } catch (error) {
++    console.log(`FAIL - Proof threw: ${(error as Error).message}`);
++    console.error(error);
++    process.exit(1);
++  }
++}
++
++if (import.meta.main) {
++  main().catch((error) => {
++    console.error("Error:", error);
++    process.exit(1);
++  });
++}
+diff --git a/test/web/ui/dom-target.test.ts b/test/web/ui/dom-target.test.ts
+index 07ba89c..7fe8a30 100644
+--- a/test/web/ui/dom-target.test.ts
++++ b/test/web/ui/dom-target.test.ts
+@@ -2261,4 +2261,194 @@ describe("createDomTarget", () => {
+       expect(readTranscriptTexts(root)).toEqual(["user: hi", "assistant: Partial (cancelled)"]);
+     });
+   });
++
++  describe("M13-C3 correction: do not clear the prompt input if the human typed into it mid-send", () => {
++    it("human-typed text survives a successful send that was in flight", async () => {
++      const { win, doc, root } = createTestWindow();
++      const target = createDomTarget(root as any);
++      const storage = createMemoryStorage();
++      const store = createConversationStore(storage);
++      const conv = store.createConversation({ profileId: "prof-1" });
++
++      let sendPromise: Promise<any>;
++      let resolveSend: () => void;
++
++      const fakeCoordinator: SessionCoordinator = {
++        async createConversation(input: { profileId: string; title?: string }) {
++          return store.createConversation(input);
++        },
++        async send(conversationId: string, prompt: string, handlers?: GenerationHandlers): Promise<SendResult> {
++          // Create a promise that the test can control
++          sendPromise = new Promise((resolve) => {
++            resolveSend = () => resolve(undefined);
++          });
++          await sendPromise;
++
++          store.appendTurn(conversationId, {
++            role: "user",
++            content: prompt,
++            cancelled: false,
++            createdAt: new Date().toISOString(),
++          });
++          store.appendTurn(conversationId, {
++            role: "assistant",
++            content: "Response",
++            cancelled: false,
++            createdAt: new Date().toISOString(),
++          });
++
++          return {
++            generationId: "gen-1",
++            text: "Response",
++            status: "complete",
++            telemetry: null,
++            errorCode: null,
++            streamError: null,
++            sessionRebuilt: false,
++            replayedTurns: 0,
++          };
++        },
++        async cancel() {
++          return { status: "cancelled" };
++        },
++        async setProfile(conversationId: string, profileId: string) {
++          return store.setProfileId(conversationId, profileId);
++        },
++        async resumeIfInterrupted(): Promise<ResumeResult> {
++          return { resumed: false, generationId: null, text: "", status: null, telemetry: null, errorCode: null, streamError: null, reconciledFromSession: false, seqs: [] };
++        },
++        async listProfiles() {
++          return [{ id: "prof-1", role: "assistant", quality: "high", latency_class: "fast", label: "Profile 1" }];
++        },
++      };
++
++      const controller = mount({
++        target,
++        coordinator: fakeCoordinator,
++        store,
++        initialState: { selectedConversationId: conv.id },
++      });
++
++      target.attach({ actions: controller.actions, controller });
++
++      const promptInput = root.querySelector('[data-testid="prompt-input"]') as any;
++      promptInput.value = "original prompt";
++
++      const sendBtn = root.querySelector('[data-testid="send"]') as any;
++      const sendEventPromise = sendBtn.dispatchEvent(new win.Event("click"));
++
++      // Wait a tick to ensure the send is in flight
++      await new Promise(r => setTimeout(r, 0));
++
++      // While send is in flight, human types new text
++      promptInput.value = "new text typed while sending";
++
++      // Now let the send complete
++      resolveSend!();
++      await new Promise(r => setTimeout(r, 10));
++
++      // The newly typed text should survive the send
++      expect(promptInput.value).toBe("new text typed while sending");
++    });
++
++    it("offline retry path clears the input when retry succeeds without new typing", async () => {
++      const { win, doc, root } = createTestWindow();
++      const target = createDomTarget(root as any);
++      const storage = createMemoryStorage();
++      const store = createConversationStore(storage);
++      const conv = store.createConversation({ profileId: "prof-1" });
++
++      let rejectFirstSend: any = null;
++      let resolveRetry: any = null;
++      let sendCount = 0;
++
++      const fakeCoordinator: SessionCoordinator = {
++        async createConversation(input: { profileId: string; title?: string }) {
++          return store.createConversation(input);
++        },
++        async send(conversationId: string, prompt: string, handlers?: GenerationHandlers): Promise<SendResult> {
++          sendCount++;
++          if (sendCount === 1) {
++            // First send fails with offline error
++            return new Promise<SendResult>((_resolve, reject) => {
++              rejectFirstSend = reject;
++            });
++          } else {
++            // Retry succeeds
++            return new Promise<SendResult>((resolve) => {
++              resolveRetry = resolve;
++            });
++          }
++        },
++        async cancel() {
++          return { status: "cancelled" };
++        },
++        async setProfile(conversationId: string, profileId: string) {
++          return store.setProfileId(conversationId, profileId);
++        },
++        async resumeIfInterrupted(): Promise<ResumeResult> {
++          return { resumed: false, generationId: null, text: "", status: null, telemetry: null, errorCode: null, streamError: null, reconciledFromSession: false, seqs: [] };
++        },
++        async listProfiles() {
++          return [{ id: "prof-1", role: "assistant", quality: "high", latency_class: "fast", label: "Profile 1" }];
++        },
++      };
++
++      const controller = mount({
++        target,
++        coordinator: fakeCoordinator,
++        store,
++        initialState: { selectedConversationId: conv.id },
++      });
++
++      target.attach({ actions: controller.actions, controller });
++
++      const promptInput = root.querySelector('[data-testid="prompt-input"]') as any;
++      promptInput.value = "draft prompt";
++
++      const sendBtn = root.querySelector('[data-testid="send"]') as any;
++      sendBtn.dispatchEvent(new win.Event("click"));
++
++      // Wait a tick for send to start
++      await new Promise(r => setTimeout(r, 0));
++
++      // Reject the send with offline error - this preserves the draft
++      if (rejectFirstSend) {
++        const err = new HarnessOfflineError("http://example.com", new Error("offline"));
++        err.draftPrompt = "draft prompt";
++        rejectFirstSend(err);
++      }
++
++      await new Promise(r => setTimeout(r, 10));
++
++      // The draft should still be in the input
++      expect(promptInput.value).toBe("draft prompt");
++
++      // Now click retry without typing anything new
++      const retryBtn = root.querySelector('[data-testid="retry"]') as any;
++      expect(retryBtn).not.toBeNull();
++      retryBtn.dispatchEvent(new win.Event("click"));
++
++      await new Promise(r => setTimeout(r, 0));
++
++      // Resolve the retry send
++      if (resolveRetry) {
++        resolveRetry({
++          generationId: "gen-1",
++          text: "Response",
++          status: "complete",
++          telemetry: null,
++          errorCode: null,
++          streamError: null,
++          sessionRebuilt: false,
++          replayedTurns: 0,
++        });
++      }
++
++      await new Promise(r => setTimeout(r, 10));
++
++      // Now the input SHOULD be cleared since retry succeeded
++      expect(promptInput.value).toBe("");
++    });
++  });
+ });
+diff --git a/web/src/ui/dom-target.ts b/web/src/ui/dom-target.ts
+index a8e5b21..1ad06c3 100644
+--- a/web/src/ui/dom-target.ts
++++ b/web/src/ui/dom-target.ts
+@@ -142,6 +142,10 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+     const d = deps;
+     d.controller.setNotice(null);
+ 
++    // Capture the input's current value so we can guard against clearing text
++    // the human may have typed while the send was in flight (M13-C3).
++    const inputSnapshot = promptInput.value;
++
+     // Create handlers for streaming updates
+     let streamed = "";
+     let announcedStreaming = false;
+@@ -188,8 +192,12 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+         d.controller.setStreamingText("");
+         // Only clear the draft once a send has actually succeeded -- a
+         // send that fails at the transport layer must leave the drafted
+-        // prompt exactly as the human typed it (M13-T1).
+-        promptInput.value = "";
++        // prompt exactly as the human typed it (M13-T1). Also guard against
++        // clearing text if the human typed new input while the send was in
++        // flight (M13-C3).
++        if (promptInput.value === inputSnapshot) {
++          promptInput.value = "";
++        }
+         d.controller.render();
+       })
+       .catch((error) => {
+diff --git a/web/src/ui/dom-target.ts.bak b/web/src/ui/dom-target.ts.bak
+deleted file mode 100644
+index 6551790..0000000
+--- a/web/src/ui/dom-target.ts.bak
++++ /dev/null
+@@ -1,330 +0,0 @@
+-// One of the two modules in web/src/ permitted to touch the DOM -- the
+-// other is ui/pairing-target.ts. That module is kept separate because it
+-// renders before any conversation UI exists: the app has no credential yet,
+-// and every API call this module could make would 401. Its rendering is
+-// attested on the physical device in milestone M10, not here -- kept as
+-// small and obvious as possible: plain DOM calls, no framework, no
+-// innerHTML with interpolated content.
+-import type { RenderTarget } from "./render-target";
+-import type { ViewModel, GenerationDisplay } from "./view-model";
+-import type { UiActions } from "./actions";
+-import type { Profile } from "../api-client";
+-import type { GenerationHandlers } from "../session-coordinator";
+-import type { HarnessStreamError } from "../api-client";
+-import { toTelemetryDisplay, describeError } from "./view-model";
+-
+-export interface DomController {
+-  render(): void;
+-  select(conversationId: string | null): void;
+-  setGeneration(generation: GenerationDisplay): void;
+-  setStreamingText(text: string): void;
+-  setProfiles(profiles: readonly Profile[]): void;
+-  setNotice(notice: string | null): void;
+-}
+-
+-export interface DomTarget extends RenderTarget {
+-  attach(deps: { actions: UiActions; controller: DomController }): void;
+-}
+-
+-function generationStatusText(generation: GenerationDisplay): string {
+-  switch (generation.kind) {
+-    case "idle":
+-      return "Idle";
+-    case "queued":
+-      return `Queued (position ${generation.position})`;
+-    case "model-loading":
+-      return "Loading model...";
+-    case "streaming":
+-      return "Streaming...";
+-    case "complete":
+-      return (
+-        `Complete — ${generation.telemetry.tokensPerSecond} tok/s, ` +
+-        `${generation.telemetry.evalCount} tokens evaluated, ` +
+-        `quantization ${generation.telemetry.quantization}, ` +
+-        `context limit ${generation.telemetry.contextLimit}`
+-      );
+-    case "cancelled":
+-      return "Cancelled";
+-    case "error":
+-      return `Error (${generation.code}): ${generation.message}`;
+-  }
+-}
+-
+-export function createDomTarget(root: HTMLElement): DomTarget {
+-  const doc = root.ownerDocument;
+-
+-  let deps: { actions: UiActions; controller: DomController } | null = null;
+-  let selectedConversationId: string | null = null;
+-  let profiles: readonly Profile[] = [];
+-
+-  // Create sections for layout
+-  const controlsSection = doc.createElement("section");
+-  const conversationsList = doc.createElement("ul");
+-  const conversationsSection = doc.createElement("section");
+-  conversationsSection.appendChild(conversationsList);
+-
+-  const transcriptList = doc.createElement("ul");
+-  const transcriptSection = doc.createElement("section");
+-  transcriptSection.appendChild(transcriptList);
+-
+-  const profilesList = doc.createElement("ul");
+-  const profilesSection = doc.createElement("section");
+-  profilesSection.appendChild(profilesList);
+-
+-  const statusSection = doc.createElement("section");
+-  statusSection.setAttribute("data-testid", "status");
+-
+-  // Surfaces failures and guard-clause refusals (BLOCKER 2 correction,
+-  // M12-C1T2). Appended LAST -- several tests select sections/uls
+-  // positionally, and adding a section at the end with no <ul> inside it
+-  // leaves every existing index valid. Do not reorder or insert elsewhere.
+-  const noticeSection = doc.createElement("section");
+-  noticeSection.setAttribute("data-testid", "notice");
+-
+-  root.replaceChildren(
+-    controlsSection,
+-    conversationsSection,
+-    transcriptSection,
+-    profilesSection,
+-    statusSection,
+-    noticeSection
+-  );
+-
+-  // Create and add controls to controlsSection
+-  const promptInput = doc.createElement("textarea");
+-  promptInput.setAttribute("data-testid", "prompt-input");
+-
+-  const sendBtn = doc.createElement("button");
+-  sendBtn.setAttribute("data-testid", "send");
+-  sendBtn.textContent = "Send";
+-  sendBtn.addEventListener("click", () => {
+-    if (!deps) return;
+-    if (!selectedConversationId) {
+-      deps.controller.setNotice("Select a conversation before sending.");
+-      return;
+-    }
+-
+-    const trimmedText = promptInput.value.trim();
+-    if (trimmedText === "") {
+-      deps.controller.setNotice("Type a prompt before sending.");
+-      return;
+-    }
+-
+-    // Capture deps once to avoid null narrowing issues in handlers
+-    const d = deps;
+-    d.controller.setNotice(null);
+-
+-    // Create handlers for streaming updates
+-    let streamed = "";
+-    let announcedStreaming = false;
+-
+-    const handlers: GenerationHandlers = {
+-      onQueued: (position) => {
+-        d.controller.setGeneration({ kind: "queued", position });
+-      },
+-      onModelLoading: () => {
+-        d.controller.setGeneration({ kind: "model-loading" });
+-      },
+-      onDelta: (delta) => {
+-        streamed += delta;
+-        if (!announcedStreaming) {
+-          announcedStreaming = true;
+-          d.controller.setGeneration({ kind: "streaming" });
+-        }
+-        d.controller.setStreamingText(streamed);
+-      },
+-      onComplete: (telemetry) => {
+-        d.controller.setGeneration({
+-          kind: "complete",
+-          telemetry: toTelemetryDisplay(telemetry),
+-        });
+-      },
+-      onCancelled: () => {
+-        d.controller.setGeneration({ kind: "cancelled" });
+-      },
+-      onError: (code, error: HarnessStreamError) => {
+-        d.controller.setStreamingText("");
+-        d.controller.setGeneration({
+-          kind: "error",
+-          code,
+-          message: error.guidance.detail,
+-        });
+-      },
+-    };
+-
+-    d.controller.setStreamingText("");
+-    d.controller.setGeneration({ kind: "streaming" });
+-
+-    d.actions.send(selectedConversationId, trimmedText, handlers)
+-      .then(() => {
+-        d.controller.setStreamingText("");
+-        d.controller.render();
+-      })
+-      .catch((error) => {
+-        d.controller.setStreamingText("");
+-        d.controller.setNotice(describeError(error));
+-      });
+-    promptInput.value = "";
+-  });
+-
+-  const cancelBtn = doc.createElement("button");
+-  cancelBtn.setAttribute("data-testid", "cancel");
+-  cancelBtn.textContent = "Cancel";
+-  cancelBtn.addEventListener("click", () => {
+-    if (!deps) return;
+-    if (!selectedConversationId) {
+-      deps.controller.setNotice("Select a conversation before cancelling.");
+-      return;
+-    }
+-    const d = deps;
+-    d.controller.setNotice(null);
+-    d.actions.cancel(selectedConversationId)
+-      .catch((error) => {
+-        d.controller.setNotice(describeError(error));
+-      });
+-  });
+-
+-  const profileSelect = doc.createElement("select");
+-  profileSelect.setAttribute("data-testid", "profile-select");
+-
+-  profileSelect.addEventListener("change", () => {
+-    if (!deps) return;
+-    if (!selectedConversationId) {
+-      deps.controller.setNotice("Select a conversation before changing its profile.");
+-      return;
+-    }
+-    const selectedProfileId = profileSelect.value;
+-    if (selectedProfileId) {
+-      const d = deps;
+-      d.controller.setNotice(null);
+-      d.actions.chooseProfile(selectedConversationId, selectedProfileId)
+-        .then(() => {
+-          d.controller.render();
+-        })
+-        .catch((error) => {
+-          d.controller.setNotice(describeError(error));
+-        });
+-    }
+-  });
+-
+-  const createConversationBtn = doc.createElement("button");
+-  createConversationBtn.setAttribute("data-testid", "create-conversation");
+-  createConversationBtn.textContent = "Create";
+-  createConversationBtn.addEventListener("click", () => {
+-    if (!deps) return;
+-    const selectedProfileId = profileSelect.value;
+-    if (!selectedProfileId) {
+-      // This is the unpaired case (BLOCKER 2, M12-C1T2): an unpaired or
+-      // no-longer-authorised phone never receives a profile list, so the
+-      // selector stays empty and this guard fires. Point at pairing, not
+-      // just "pick a profile".
+-      deps.controller.setNotice(
+-        "No profile selected, and none are available to choose from. If this " +
+-          "device is not paired with your Mac's harness, or the pairing is no " +
+-          "longer valid, scan the pairing QR code again to re-pair."
+-      );
+-      return;
+-    }
+-
+-    // Capture deps once to avoid null narrowing issues in the handler below.
+-    const d = deps;
+-    d.controller.setNotice(null);
+-
+-    d.actions.createConversation({ profileId: selectedProfileId })
+-      .then((conversation) => {
+-        d.controller.render(); // reloads conversations from the store
+-        d.controller.select(conversation.id); // selects the new one and repaints
+-      })
+-      .catch((error) => {
+-        d.controller.setNotice(describeError(error));
+-      });
+-  });
+-
+-  controlsSection.appendChild(promptInput);
+-  controlsSection.appendChild(sendBtn);
+-  controlsSection.appendChild(cancelBtn);
+-  controlsSection.appendChild(profileSelect);
+-  controlsSection.appendChild(createConversationBtn);
+-
+-  return {
+-    attach(newDeps: { actions: UiActions; controller: DomController }): void {
+-      deps = newDeps;
+-    },
+-
+-    paint(view: ViewModel): void {
+-      selectedConversationId = view.conversations.find((c) => c.selected)?.id ?? null;
+-      profiles = view.profiles;
+-
+-      // Update profile selector
+-      const selectedProfileId = view.selectedProfileId;
+-      const profileOptions = view.profiles.map((profile) => {
+-        const option = doc.createElement("option");
+-        option.value = profile.id;
+-        option.textContent = profile.label;
+-        if (profile.id === selectedProfileId) {
+-          option.selected = true;
+-        }
+-        return option;
+-      });
+-      profileSelect.replaceChildren(...profileOptions);
+-
+-      // Render conversations
+-      const conversationItems = view.conversations.map((conversation) => {
+-        const item = doc.createElement("li");
+-
+-        const openBtn = doc.createElement("button");
+-        openBtn.setAttribute("data-testid", "open-conversation");
+-        openBtn.setAttribute("data-conversation-id", conversation.id);
+-        openBtn.textContent = `${conversation.selected ? "▸ " : ""}${
+-          conversation.title || conversation.id
+-        } (${conversation.updatedAt})`;
+-        openBtn.addEventListener("click", () => {
+-          if (!deps) return;
+-          deps.controller.select(conversation.id);
+-        });
+-
+-        const deleteBtn = doc.createElement("button");
+-        deleteBtn.setAttribute("data-testid", "delete-conversation");
+-        deleteBtn.setAttribute("data-conversation-id", conversation.id);
+-        deleteBtn.textContent = "Delete";
+-        deleteBtn.addEventListener("click", () => {
+-          if (!deps) return;
+-          const d = deps;
+-          d.actions.deleteConversation(conversation.id);
+-          if (selectedConversationId === conversation.id) {
+-            d.controller.select(null);
+-          }
+-          d.controller.render();
+-        });
+-
+-        item.appendChild(openBtn);
+-        item.appendChild(deleteBtn);
+-        return item;
+-      });
+-      conversationsList.replaceChildren(...conversationItems);
+-
+-      // Render transcript
+-      const transcriptItems = view.transcript.map((entry) => {
+-        const item = doc.createElement("li");
+-        item.textContent = `${entry.role}: ${entry.content}${
+-          entry.cancelled ? " (cancelled)" : ""
+-        }${entry.pending ? " (pending)" : ""}`;
+-        return item;
+-      });
+-      transcriptList.replaceChildren(...transcriptItems);
+-
+-      // Render profiles list
+-      const profileItems = view.profiles.map((profile) => {
+-        const item = doc.createElement("li");
+-        item.textContent = `${profile.label}${
+-          profile.id === view.selectedProfileId ? " (selected)" : ""
+-        }`;
+-        return item;
+-      });
+-      profilesList.replaceChildren(...profileItems);
+-
+-      statusSection.textContent = generationStatusText(view.generation);
+-      noticeSection.textContent = view.notice ?? "";
+-    },
+-  };
+-}

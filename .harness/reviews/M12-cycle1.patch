@@ -1,0 +1,1949 @@
+diff --git a/.harness/tasks/M12-C1T1.md b/.harness/tasks/M12-C1T1.md
+new file mode 100644
+index 0000000..d67463c
+--- /dev/null
++++ b/.harness/tasks/M12-C1T1.md
+@@ -0,0 +1,116 @@
++TASK
++
++Tier: Mid. Reason: **not low risk — being wrong is hard to detect.** This defect
++coexisted with 768 passing tests and two passing live proofs because the tests
++themselves supplied the repaint the UI never performs. Correcting it requires
++removing that compensation and proving the corrected assertions actually bite.
++
++Goal:
++Fix BLOCKER 1 of `.harness/reviews/M12-cycle1.md` (read that finding — do not
++work from this summary alone): in `web/src/ui/dom-target.ts`, creating a
++conversation must repaint the UI and leave the new conversation selected, so
++that **Send works immediately afterwards with no further user action**; deleting
++must repaint too. Then remove the manual `handle.render()` calls in the test and
++the live proof that were hiding the defect.
++
++Relevant Requirements:
++M12 criterion 6 (human-attested on the physical iPhone): the user types a
++prompt, taps Send, sees output stream, and can cancel. Today there is **no tap
++sequence** that reaches a state where Send does anything, because
++`selectedConversationId` in `dom-target.ts` is only ever set by `paint()`, and
++nothing repaints after a create.
++
++Acceptance Criteria:
++1. Clicking `[data-testid="create-conversation"]` with a profile selected results
++   in the conversation list being repainted (an `[data-testid="open-conversation"]`
++   button exists for the new conversation) **and** the new conversation being the
++   selected one, without any caller invoking `render()` or `select()` by hand.
++2. Immediately after (1), clicking `[data-testid="send"]` with non-empty text in
++   `[data-testid="prompt-input"]` dispatches `actions.send` for the new
++   conversation id. It must not be a silent no-op.
++3. Clicking `[data-testid="delete-conversation"]` repaints the list (the deleted
++   conversation's buttons are gone). If the deleted conversation was the selected
++   one, selection is cleared.
++4. `test/web/ui/bundle-interactive.test.ts` no longer calls `handle.render()` (or
++   any other controller method) to compensate for the UI's failure to repaint
++   after a create or a delete. The test drives the app only through DOM events a
++   user could produce: setting `.value` on an input and dispatching `click`.
++5. `src/host/m12-proof.ts` likewise no longer calls `handle.render()` to make the
++   flow progress after creating a conversation. It must exercise the same taps a
++   user makes. (Its two calls are at lines 109 and 149 — read them; if one is
++   legitimately doing something else, say which in Unresolved Issues rather than
++   deleting it blindly.)
++6. **Bite-check, and report the output.** For each assertion you changed or added
++   under (1)-(3): revert your `dom-target.ts` correction temporarily (keep the
++   test change), run the test, and confirm it FAILS. Then restore the correction
++   and confirm it PASSES. Paste both runs' relevant output into your return. An
++   assertion that passes with the correction reverted is not evidence and must be
++   strengthened until it fails.
++
++Implementation note (the mechanism is decided; do not redesign it):
++
++  Create handler (~line 171). Capture `deps` into a local `d` first, then:
++
++      d.actions.createConversation({ profileId: selectedProfileId })
++        .then((conversation) => {
++          d.controller.render();               // reloads conversations from the store
++          d.controller.select(conversation.id); // selects the new one and repaints
++        })
++        .catch(() => {});
++
++  `MountHandle.render()` reloads `store.loadConversations()` and paints;
++  `select()` sets `selectedConversationId` and paints. Both are needed and in
++  that order.
++
++  **Leave the `.catch(() => {})` swallowing for now, with a comment saying error
++  surfacing is added by the BLOCKER 2 correction.** A separate task (M12-C1T2)
++  replaces every swallowed error in this file. Do not do error surfacing here —
++  you would collide with it.
++
++  Delete handler (~line 225): `deleteConversation` is synchronous. After calling
++  it, if the deleted id equals the currently selected one, call
++  `d.controller.select(null)`; then call `d.controller.render()`.
++
++Relevant Files:
++- web/src/ui/dom-target.ts        (the defect; create handler ~171, delete ~225)
++- web/src/ui/mount.ts             (read-only: render/select semantics)
++- web/src/ui/actions.ts           (read-only: createConversation returns Promise<Conversation>)
++- test/web/ui/bundle-interactive.test.ts   (manual render at line 243)
++- test/web/ui/dom-target.test.ts           (existing create/delete dispatch tests)
++- src/host/m12-proof.ts                    (manual renders at lines 109, 149)
++- .harness/reviews/M12-cycle1.md           (BLOCKER 1 — read it)
++
++Files Allowed To Change:
++- web/src/ui/dom-target.ts
++- test/web/ui/bundle-interactive.test.ts
++- test/web/ui/dom-target.test.ts
++- src/host/m12-proof.ts
++
++Constraints:
++- Follow existing repository patterns.
++- Do not change unrelated behaviour. In particular do NOT touch the send handler's
++  `.catch`, `web/src/main.ts`, `web/src/ui/view-model.ts`, `web/src/ui/mount.ts`,
++  or `web/public/index.html` — other correction tasks own those.
++- Do not add or change the set of `<section>` or `<ul>` elements in
++  `dom-target.ts`'s root. Some tests select positionally (`sections[2]`,
++  `querySelectorAll("ul")[1]`); changing the document shape breaks them and is
++  explicitly out of scope for this cycle.
++- Do not introduce dependencies. happy-dom is test-only and must never be
++  imported by anything under `web/src/`.
++- Do not weaken tests. Removing a `handle.render()` that compensates for the
++  defect is *strengthening*; deleting an assertion is not.
++
++Tests:
++- bun test test/web/ui/dom-target.test.ts test/web/ui/bundle-interactive.test.ts
++- bun test        (full suite; must stay green)
++- bunx tsc --noEmit
++- bun run build
++- bun run proof:m12    (LIVE harness — Ollama is running, do not mock it)
++
++Return:
++- Summary
++- Files changed
++- Tests run
++- Test result
++- Bite-check evidence (the reverted-correction failure output and the restored pass)
++- Unresolved issues
+diff --git a/.harness/tasks/M12-C1T2.md b/.harness/tasks/M12-C1T2.md
+new file mode 100644
+index 0000000..086f090
+--- /dev/null
++++ b/.harness/tasks/M12-C1T2.md
+@@ -0,0 +1,163 @@
++TASK
++
++Tier: Mid. Reason: **not low risk, and cross-module.** The change threads a new
++field through view-model -> mount -> dom-target -> main.ts, and it is the FR9
++error-surfacing path that M12 discarded. Getting the error-to-message mapping
++wrong reproduces the exact failure this cycle exists to fix: a user who cannot
++tell working from broken.
++
++Goal:
++Fix BLOCKER 2 of `.harness/reviews/M12-cycle1.md` (read that finding in full --
++do not work from this summary alone). Every failure path in the interactive
++layer is currently silent: swallowed rejections and bare guard `return`s. Make
++failures and refusals reach the screen.
++
++Relevant Requirements:
++FR9 -- documented error codes must be "surfaced meaningfully rather than as a
++generic failure", and `unauthorized` specifically must "prompt to re-pair". M7
++built that guidance surface (`ErrorGuidance`, `httpErrorGuidance`,
++`streamErrorGuidance`, `HarnessHttpError.guidance`, `HarnessStreamError.guidance`
++in `web/src/api-client.ts`); the interactive layer added in M12 discards it
++before it can reach the screen.
++
++Context you need: the harness returns **401** to an unauthenticated request, so
++on an unpaired phone `coordinator.listProfiles()` rejects, `main.ts` swallows it,
++the `<select>` stays empty, and `Create` then hits `if (!selectedProfileId)
++return;` and is a silent no-op too. That is what the human saw.
++
++The mechanism is decided. Implement it; do not redesign it.
++
++  A. `web/src/ui/view-model.ts`
++     - Add `notice: string | null` to `UiState` and to `ViewModel`.
++     - `buildViewModel` passes it straight through.
++     - Add and export a DOM-free helper:
++           export function describeError(error: unknown): string
++       It must use the existing guidance surface rather than inventing text:
++       if the error carries a `guidance` object (HarnessHttpError,
++       HarnessStreamError, and the offline/other error classes in
++       api-client.ts all do), build the message from that guidance -- read
++       `ErrorGuidance`'s fields and use them; include the error `code`.
++       For code `unauthorized` the message must explicitly say the phone is not
++       paired (or the pairing is no longer valid) and prompt the user to scan
++       the QR code again to re-pair. Fall back to a readable message for an
++       unrecognised error rather than "[object Object]" or an empty string.
++
++  B. `web/src/ui/mount.ts`  (must stay DOM-free -- it must never runtime-import
++     ./dom-target; see the "no bypass access" suite in test/web/ui/mount.test.ts)
++     - `notice` in the initial state (`initialState?.notice ?? null`), and in
++       `copyState`.
++     - Add `setNotice(notice: string | null): void` to `MountHandle`: sets state,
++       then `paint()`.
++
++  C. `web/src/ui/dom-target.ts`
++     - Add `setNotice(notice: string | null): void` to the `DomController`
++       interface.
++     - Create a `noticeSection` with `data-testid="notice"` and append it **LAST**
++       in `root.replaceChildren(...)`, after `statusSection`. Appending last is
++       required: several tests select positionally (`sections[2]`,
++       `querySelectorAll("ul")[1]`), and adding a section at the end with no
++       `<ul>` inside it leaves every existing index valid. Do not reorder or
++       insert anywhere else.
++     - `paint()` sets `noticeSection.textContent = view.notice ?? ""`.
++     - Replace the send handler's `.catch(() => {})` (~line 143) with one that
++       calls `d.controller.setNotice(describeError(error))`. Also clear the
++       stale streaming text.
++     - Replace the create handler's `.catch(() => {})` (added by the previous
++       correction task, with a comment pointing here) the same way.
++     - Clear the notice at the start of an action that is actually proceeding,
++       so a stale message does not sit under a working app.
++     - **Every guard clause that declines to act must say why**, via
++       `setNotice`, in these handlers:
++         send   -- no conversation selected; empty prompt text
++         cancel -- no conversation selected
++         profile-change -- no conversation selected
++         create -- no profile selected. This is the unpaired case the human hit,
++                   so the message must point at pairing, not just say "pick a
++                   profile".
++       The `if (!deps) return;` guard is the only one that may stay silent --
++       there is no controller to speak through before `attach()`. Leave it, and
++       say so in your return.
++
++  D. `web/src/main.ts`
++     - Replace `coordinator.listProfiles().then(...).catch(() => {})` (~line 103)
++       with a `.catch` that calls `handle.setNotice(describeError(error))`.
++       Delete the now-false comment claiming "error surfacing is not this
++       milestone's scope".
++     - It must still be true that a failure here does not stop the app mounting.
++     - The service-worker registration `.catch` at ~line 121 is NOT in scope;
++       leave it.
++
++Acceptance Criteria:
++1. A send that rejects puts a message derived from the error's guidance into
++   `[data-testid="notice"]`. Silent failure is gone.
++2. A `listProfiles()` rejection during `bootstrap()` puts a message into the
++   notice region; a 401 / `unauthorized` message explicitly prompts the user to
++   re-pair. `bootstrap()` still returns a mounted handle and does not throw.
++3. Clicking Send with no conversation selected, Send with empty text, Cancel with
++   no conversation selected, changing the profile with no conversation selected,
++   and Create with no profile selected each leave a message explaining why
++   nothing happened. None of them is silently inert.
++4. `describeError` is unit-tested against a real `HarnessHttpError` with code
++   `unauthorized` (constructed from api-client, not hand-rolled) and against at
++   least one stream error and one non-Error value.
++5. No positional test selector breaks. If one does, fix that selector and
++   **report exactly which, and why the document shape had to change** -- that is
++   information the next review needs.
++6. **Bite-check every assertion you add.** Revert your source change (keep the
++   test), run the test, confirm it FAILS; restore, confirm it PASSES. Paste both
++   runs' relevant output into your return. An assertion that passes with the
++   correction reverted is not evidence.
++
++Relevant Files:
++- web/src/api-client.ts        (read-only: ErrorGuidance, the guidance tables, the error classes)
++- web/src/ui/view-model.ts
++- web/src/ui/mount.ts
++- web/src/ui/dom-target.ts
++- web/src/main.ts
++- test/web/ui/{view-model,mount,dom-target,bundle-mount,bundle-interactive}.test.ts
++- test/web/main-bootstrap.test.ts
++- test/web/bundle-purity.test.ts   (read-only: the bundle must stay happy-dom-free)
++- .harness/reviews/M12-cycle1.md   (BLOCKER 2 -- read it)
++
++Files Allowed To Change:
++- web/src/ui/view-model.ts
++- web/src/ui/mount.ts
++- web/src/ui/dom-target.ts
++- web/src/main.ts
++- test/web/ui/view-model.test.ts
++- test/web/ui/mount.test.ts
++- test/web/ui/dom-target.test.ts
++- test/web/ui/bundle-mount.test.ts
++- test/web/ui/bundle-interactive.test.ts
++- test/web/main-bootstrap.test.ts
++
++Constraints:
++- Follow existing repository patterns. No framework, no innerHTML with
++  interpolated content -- `dom-target.ts` is the only module allowed to touch the
++  DOM and must stay plain DOM calls.
++- Do NOT touch `web/public/index.html`, `test/build.test.ts`, or
++  `src/host/m12-proof.ts` -- other tasks own those this cycle.
++- Do NOT change the create/delete repaint logic added by the previous correction
++  task (the `.then(conversation => { render(); select(conversation.id) })` and the
++  delete handler's `select(null)` + `render()`). Only their `.catch` is yours.
++- happy-dom is a test-only devDependency and must NEVER be imported by anything
++  under `web/src/`.
++- Do not introduce dependencies.
++- Do not weaken tests. Do not delete an assertion to make something pass.
++
++Tests:
++- bun test test/web/ui/ test/web/main-bootstrap.test.ts
++- bun test        (full suite; must stay green -- it was 772 pass / 0 fail)
++- bunx tsc --noEmit
++- bun run build
++- bun run proof:m12    (LIVE harness -- Ollama is running; do not mock it)
++
++Return:
++- Summary
++- Files changed
++- Tests run
++- Test result
++- Bite-check evidence (reverted failure output, restored pass) for each new assertion
++- Which guard clauses now speak, and which (if any) still cannot
++- Any positional selector you had to change, and why
++- Unresolved issues
+diff --git a/.harness/tasks/M12-C1T3.md b/.harness/tasks/M12-C1T3.md
+new file mode 100644
+index 0000000..e49561b
+--- /dev/null
++++ b/.harness/tasks/M12-C1T3.md
+@@ -0,0 +1,66 @@
++TASK
++
++Tier: Cheap. It is clearly specified, bounded to one small file plus a test,
++low risk, and settled by a grep-level assertion.
++
++Goal:
++Fix BLOCKER 3 of `.harness/reviews/M12-cycle1.md` (read that finding):
++`web/public/index.html` combines `viewport-fit=cover` with
++`apple-mobile-web-app-status-bar-style: black-translucent`, which extends the web
++view under the iOS status bar and home indicator, but its CSS compensates with
++nothing (`body { margin: 0; padding: 1rem; }`). The first element in the rendered
++DOM is the prompt `<textarea>`, so on the installed home-screen app it lands
++under the clock and cannot reliably be tapped. Honour the safe-area insets.
++
++Acceptance Criteria:
++1. `web/public/index.html`'s `body` padding honours the safe-area insets on all
++   four sides, e.g.:
++
++       padding-top: max(1rem, env(safe-area-inset-top));
++       padding-right: max(1rem, env(safe-area-inset-right));
++       padding-bottom: max(1rem, env(safe-area-inset-bottom));
++       padding-left: max(1rem, env(safe-area-inset-left));
++
++   Keep 1rem as the floor so nothing regresses on a device with zero insets.
++   Do not remove `viewport-fit=cover` or the `black-translucent` meta — they are
++   what M10 established for standalone mode; the fix is to compensate for them.
++2. A test asserts this over the **source** `web/public/index.html`, not only
++   `web/dist/`: all four `env(safe-area-inset-*)` values are present in the
++   stylesheet, and each is combined with a non-zero floor.
++3. A test asserts the built output carries it too, if there is already a build
++   test that reads `web/dist/index.html` — extend it rather than adding a new
++   file if a natural home exists. Look at `test/build.test.ts` first.
++4. Bite-check: revert the `index.html` change, run the new assertions, confirm
++   they FAIL; restore, confirm they PASS. Paste both runs into your return.
++
++Relevant Files:
++- web/public/index.html                    (the defect; the <style> block, lines 7-19)
++- test/build.test.ts                       (likely home for the built-output assertion)
++- .harness/reviews/M12-cycle1.md           (BLOCKER 3 — read it)
++
++Files Allowed To Change:
++- web/public/index.html
++- test/build.test.ts
++- one new test file under test/web/ if test/build.test.ts is not a natural home
++
++Constraints:
++- Follow existing repository patterns.
++- Do not change the DOM structure of index.html, the meta tags, the manifest
++  link, or the script tag. CSS only.
++- Do not touch anything under web/src/ or src/host/ — other correction tasks own
++  those files this cycle.
++- Do not introduce dependencies.
++- Do not weaken tests.
++
++Tests:
++- bun run build
++- bun test test/build.test.ts
++- bun test        (full suite; must stay green)
++
++Return:
++- Summary
++- Files changed
++- Tests run
++- Test result
++- Bite-check evidence (reverted failure output, restored pass)
++- Unresolved issues
+diff --git a/.harness/tasks/M12-C1T4.md b/.harness/tasks/M12-C1T4.md
+new file mode 100644
+index 0000000..91f4644
+--- /dev/null
++++ b/.harness/tasks/M12-C1T4.md
+@@ -0,0 +1,83 @@
++TASK
++
++Tier: Cheap. Clearly specified, bounded to three files, low risk, and settled
++outright by `bun run proof:m12` plus the full suite.
++
++Goal:
++The BLOCKER 2 correction appended a new `noticeSection` as the last `<section>`
++in `web/src/ui/dom-target.ts`. Three places in `src/host/m12-proof.ts` locate the
++status region **positionally** as the last section, so they now read the (empty)
++notice section instead of status, and `bun run proof:m12` times out waiting for a
++completion that already happened. Replace positional status lookup with an
++explicit test id, everywhere it is used.
++
++This is the case `.harness/reviews/M12-cycle1.md` sanctions under "Not in scope
++for this cycle": positional DOM selection is a logged follow-up **unless a
++correction forces the document shape to change**, which it did. Fix only the
++selectors that change broke. Do not go hunting for other positional selectors.
++
++Acceptance Criteria:
++1. `web/src/ui/dom-target.ts`'s `statusSection` carries
++   `data-testid="status"` (set with `setAttribute`, matching how the other
++   test ids in that file are set). This adds an attribute only -- it must NOT
++   add, remove or reorder any element, so no positional index anywhere changes.
++2. `src/host/m12-proof.ts` reads the status region via
++   `[data-testid="status"]` in all three places that currently use
++   `sections[sections.length - 1]` (two occurrences) or
++   `section:last-of-type` (one occurrence). Grep the file to find them all --
++   do not trust that count if you find more.
++3. `test/web/ui/bundle-interactive.test.ts` currently reads status as
++   `statusSections[statusSections.length - 2]` -- an index the BLOCKER 2
++   correction had to introduce precisely because the shape changed. Change it to
++   select `[data-testid="status"]` too, and update the comment above it.
++4. `bun run proof:m12` PASSES against the LIVE harness (Ollama is running; do not
++   mock it, do not stub it, do not shorten its timeout to make it pass). Paste
++   its last ~15 lines.
++5. `bun test` is green (it was 783 pass / 0 fail before this task), `bunx tsc
++   --noEmit` is clean, `bun run build` is clean.
++6. Bite-check criterion 1: temporarily remove the `data-testid="status"`
++   attribute, run `bun test test/web/ui/bundle-interactive.test.ts`, confirm it
++   FAILS; restore and confirm it PASSES. Paste both.
++
++Relevant Files:
++- web/src/ui/dom-target.ts                  (statusSection is created ~line 70 and appended in root.replaceChildren)
++- src/host/m12-proof.ts                     (the three positional status reads)
++- test/web/ui/bundle-interactive.test.ts    (the `length - 2` read)
++
++Files Allowed To Change:
++- web/src/ui/dom-target.ts
++- src/host/m12-proof.ts
++- test/web/ui/bundle-interactive.test.ts
++
++Constraints:
++- Attribute only in `dom-target.ts`. Do NOT add, remove, reorder or restructure
++  any element; do not touch the create/delete repaint logic, the notice section,
++  the guard-clause notices, or any `.catch` handler. Those are accepted
++  corrections from other tasks.
++- Do not touch any other file. In particular do not touch `web/src/main.ts`,
++  `web/src/ui/mount.ts`, `web/src/ui/view-model.ts`, `web/public/index.html` or
++  `test/build.test.ts`.
++- Do not change `m12-proof.ts` in any way beyond the selector fix -- no new
++  waits, no longer timeouts, no relaxed assertions. If it still fails after the
++  selector fix, that is a real regression: report FAIL and say so rather than
++  making the proof more forgiving.
++- Do not weaken tests.
++- Never run `git stash`, `git checkout --`, `git restore`, `git reset --hard` or
++  `git clean`. This tree holds uncommitted and untracked work from several tasks.
++  To undo your own edit, edit it back by hand.
++
++Tests:
++- bun test test/web/ui/bundle-interactive.test.ts
++- bun test
++- bunx tsc --noEmit
++- bun run build
++- bun run proof:m12    (LIVE)
++
++Return:
++- Summary
++- Files changed
++- Tests run
++- Test result
++- proof:m12 output (last ~15 lines)
++- Bite-check evidence
++- Unresolved issues
+diff --git a/src/host/m12-proof.ts b/src/host/m12-proof.ts
+index cd951f3..7b7b904 100644
+--- a/src/host/m12-proof.ts
++++ b/src/host/m12-proof.ts
+@@ -134,20 +134,20 @@ async function main() {
+     createBtn.dispatchEvent(new w.Event("click", { bubbles: true }));
+     console.log("Button clicked");
+ 
+-    // Wait for the conversation to be created (API call completes)
++    // Wait for the conversation to be created AND the DOM to reflect it.
++    // dom-target.ts's create handler awaits actions.createConversation() and,
++    // on resolution, calls controller.render() and controller.select() itself
++    // -- so the open-conversation button appearing in the DOM is the proof
++    // that the app repainted without any manual render() from this proof.
+     const conversationCreated = await waitForCondition(() => {
+-      const convs = conversationStore.loadConversations();
+-      return convs.length > 0;
++      return root.querySelector('[data-testid="open-conversation"]') !== null;
+     });
+ 
+     if (!conversationCreated) {
+-      console.log("FAIL - No conversation created after timeout");
++      console.log("FAIL - No conversation created (open-conversation button never appeared) after timeout");
+       process.exit(1);
+     }
+ 
+-    // Render to update the DOM with the new conversation
+-    handle.render();
+-
+     const conversations = conversationStore.loadConversations();
+     const conversation = conversations[0];
+     if (!conversation) {
+@@ -156,14 +156,19 @@ async function main() {
+     }
+     console.log(`Created conversation: ${conversation.id}`);
+ 
+-    // Click open-conversation button via DOM
++    // The create handler already selected the new conversation (no click on
++    // open-conversation needed to prove that) -- confirm it directly out of
++    // the rendered DOM before proceeding.
+     const openBtn = root.querySelector('[data-testid="open-conversation"]') as HTMLButtonElement | null;
+     if (!openBtn) {
+       console.log("FAIL - open-conversation button not found in DOM");
+       process.exit(1);
+     }
+-    console.log(`Clicking open-conversation button for conversation ${conversation.id}`);
+-    openBtn.dispatchEvent(new w.Event("click", { bubbles: true }));
++    if (!(openBtn.textContent || "").includes("▸")) {
++      console.log("FAIL - new conversation was not auto-selected after create");
++      process.exit(1);
++    }
++    console.log(`Conversation ${conversation.id} is selected without any manual select() call`);
+ 
+     // Allow DOM to settle
+     await new Promise((resolve) => setTimeout(resolve, 100));
+@@ -214,8 +219,8 @@ async function main() {
+         }
+       }
+ 
+-      // Read status from DOM - it should be in the last section
+-      const statusSection = sections[sections.length - 1] as HTMLElement | null;
++      // Read status from DOM - it should have data-testid="status"
++      const statusSection = root.querySelector('[data-testid="status"]') as HTMLElement | null;
+       const statusText = statusSection?.textContent || "";
+ 
+       observations.push({
+@@ -237,8 +242,7 @@ async function main() {
+     // Wait for the generation to complete (not just streaming)
+     // The status should change from "Streaming..." or "Loading model..." to "Complete" or "Error"
+     const generationComplete = await waitForCondition(() => {
+-      const sections = root.querySelectorAll("section");
+-      const statusSection = sections[sections.length - 1];
++      const statusSection = root.querySelector('[data-testid="status"]') as HTMLElement | null;
+       const statusText = statusSection?.textContent || "";
+       // Check if the generation is complete (not in Idle, Queued, or Streaming state)
+       return (
+@@ -311,7 +315,7 @@ async function main() {
+ 
+     // Get the final status text
+     console.log("\n=== FINAL STATUS ===");
+-    const statusSectionFinal = root.querySelector("section:last-of-type") as HTMLElement | null;
++    const statusSectionFinal = root.querySelector('[data-testid="status"]') as HTMLElement | null;
+     const finalStatusText = statusSectionFinal?.textContent || "";
+     console.log(`Status: ${finalStatusText}`);
+ 
+diff --git a/test/build.test.ts b/test/build.test.ts
+index c7e7969..2b105da 100644
+--- a/test/build.test.ts
++++ b/test/build.test.ts
+@@ -96,4 +96,54 @@ describe("build", () => {
+ 		// Should NOT have "export default" or top-level "export " (ES6 module syntax)
+ 		expect(/^\s*export\s+(default|const|function|class)/.test(swJs)).toBe(false);
+ 	});
++
++	it("should honour safe-area insets in source index.html for iOS viewport-fit=cover", () => {
++		const publicHtml = readFileSync(
++			join(import.meta.dir, "..", "web", "public", "index.html"),
++			"utf-8"
++		);
++
++		// Extract the CSS from the <style> tag
++		const styleMatch = publicHtml.match(/<style>([\s\S]*?)<\/style>/);
++		expect(styleMatch).toBeTruthy();
++		const css = styleMatch![1];
++
++		// Verify all four safe-area insets are present
++		expect(css).toContain("env(safe-area-inset-top)");
++		expect(css).toContain("env(safe-area-inset-right)");
++		expect(css).toContain("env(safe-area-inset-bottom)");
++		expect(css).toContain("env(safe-area-inset-left)");
++
++		// Verify each is combined with a non-zero floor (max() with 1rem or greater)
++		expect(css).toMatch(/padding-top:\s*max\([^,]+,\s*env\(safe-area-inset-top\)\)/);
++		expect(css).toMatch(/padding-right:\s*max\([^,]+,\s*env\(safe-area-inset-right\)\)/);
++		expect(css).toMatch(/padding-bottom:\s*max\([^,]+,\s*env\(safe-area-inset-bottom\)\)/);
++		expect(css).toMatch(/padding-left:\s*max\([^,]+,\s*env\(safe-area-inset-left\)\)/);
++	});
++
++	it("should carry safe-area insets in built index.html", async () => {
++		const result = await build();
++
++		const distHtml = readFileSync(
++			join(distDir, "index.html"),
++			"utf-8"
++		);
++
++		// Extract the CSS from the <style> tag
++		const styleMatch = distHtml.match(/<style>([\s\S]*?)<\/style>/);
++		expect(styleMatch).toBeTruthy();
++		const css = styleMatch![1];
++
++		// Verify all four safe-area insets are present
++		expect(css).toContain("env(safe-area-inset-top)");
++		expect(css).toContain("env(safe-area-inset-right)");
++		expect(css).toContain("env(safe-area-inset-bottom)");
++		expect(css).toContain("env(safe-area-inset-left)");
++
++		// Verify each is combined with a non-zero floor (max() with 1rem or greater)
++		expect(css).toMatch(/padding-top:\s*max\([^,]+,\s*env\(safe-area-inset-top\)\)/);
++		expect(css).toMatch(/padding-right:\s*max\([^,]+,\s*env\(safe-area-inset-right\)\)/);
++		expect(css).toMatch(/padding-bottom:\s*max\([^,]+,\s*env\(safe-area-inset-bottom\)\)/);
++		expect(css).toMatch(/padding-left:\s*max\([^,]+,\s*env\(safe-area-inset-left\)\)/);
++	});
+ });
+diff --git a/test/web/main-bootstrap.test.ts b/test/web/main-bootstrap.test.ts
+index 63c1ec3..9eef563 100644
+--- a/test/web/main-bootstrap.test.ts
++++ b/test/web/main-bootstrap.test.ts
+@@ -3,6 +3,7 @@ import { bootstrap } from "../../web/src/main";
+ import { createMemoryStorage } from "../../web/src/storage-port";
+ import type { LocationPort } from "../../web/src/credential-store";
+ import type { RenderTarget } from "../../web/src/ui/render-target";
++import { HarnessApiError } from "../../web/src/api-client";
+ import type { ApiClient } from "../../web/src/api-client";
+ import type { ConversationStore } from "../../web/src/conversation-store";
+ 
+@@ -337,4 +338,51 @@ describe("bootstrap with dependency injection", () => {
+     expect(apiClientBaseUrl).toBe("https://new.example.com");
+     expect(hashCleared).toBe(true);
+   });
++
++  it("a listProfiles() rejection during bootstrap puts a message in the notice region, mounts and returns a handle, and does not throw; unauthorized explicitly prompts re-pairing (BLOCKER 2, M12-C1T2)", async () => {
++    const storage = createMemoryStorage();
++    const location: LocationPort = {
++      hash: "",
++      origin: "https://example.test",
++      clearHash() {},
++    };
++
++    const paints: any[] = [];
++    const target: RenderTarget = {
++      paint(view) {
++        paints.push(view);
++      },
++    };
++
++    const createApiClient = (_config: any) =>
++      ({
++        listProfiles: async () => {
++          throw new HarnessApiError("unauthorized", 401, null);
++        },
++      }) as unknown as ApiClient;
++
++    const createTarget = (_root: HTMLElement) => target;
++
++    let handle: ReturnType<typeof bootstrap> | undefined;
++    expect(() => {
++      handle = bootstrap({} as HTMLElement, {
++        storage,
++        location,
++        createTarget,
++        createApiClient,
++      });
++    }).not.toThrow();
++
++    expect(handle).toBeDefined();
++    expect(typeof handle!.getState).toBe("function");
++
++    // The listProfiles() rejection is caught asynchronously; let it settle.
++    await new Promise((resolve) => setTimeout(resolve, 0));
++
++    const notice = handle!.getState().notice;
++    expect(notice).not.toBeNull();
++    expect(notice as string).toContain("unauthorized");
++    expect((notice as string).toLowerCase()).toContain("pair");
++    expect((notice as string).toLowerCase()).toContain("scan");
++  });
+ });
+diff --git a/test/web/ui/bundle-interactive.test.ts b/test/web/ui/bundle-interactive.test.ts
+index 1377493..297bd20 100644
+--- a/test/web/ui/bundle-interactive.test.ts
++++ b/test/web/ui/bundle-interactive.test.ts
+@@ -236,25 +236,23 @@ describe("bundle-interactive", () => {
+       createBtn.dispatchEvent(new w.Event("click"));
+     }).not.toThrow();
+ 
+-    // Wait for the conversation to be created and rendered
+-    // Note: dom-target.ts's create-conversation button handler doesn't call render(),
+-    // so the conversation exists in the store but the DOM might not be updated.
+-    // We trigger a render to ensure the DOM reflects the newly created conversation.
+-    handle.render();
++    // Wait for the conversation to be created. dom-target.ts's
++    // create-conversation button handler awaits actions.createConversation()
++    // and, on resolution, calls controller.render() and controller.select()
++    // itself -- the DOM must repaint and select the new conversation with no
++    // further help from the test.
+     await new Promise((resolve) => setTimeout(resolve, 50));
+ 
+     // Find the open-conversation button for the new conversation (should be the first one)
+     const openBtns = root.querySelectorAll('[data-testid="open-conversation"]') as any;
+     expect(openBtns.length).toBeGreaterThan(0);
+ 
+-    // Click the open-conversation button to select the new conversation
+-    const openBtn = openBtns[0];
+-    expect(() => {
+-      openBtn.dispatchEvent(new w.Event("click"));
+-    }).not.toThrow();
+-
+-    // Wait for selection to register
+-    await new Promise((resolve) => setTimeout(resolve, 10));
++    // The create handler already selected the new conversation (no click on
++    // open-conversation needed to prove that). dom-target.ts prefixes the
++    // selected conversation's button text with "▸ ", so read that directly
++    // out of the rendered DOM rather than trusting internal state.
++    expect((openBtns[0] as any).textContent).toContain("▸");
++    expect(handle.getState().selectedConversationId).not.toBeNull();
+ 
+     // Set the prompt input value
+     const promptInput = root.querySelector('[data-testid="prompt-input"]') as any;
+@@ -278,9 +276,12 @@ describe("bundle-interactive", () => {
+     expect(transcriptText).toContain("Hello");
+     expect(transcriptText).toContain("World");
+ 
+-    // Assert that the status region renders the completion telemetry
+-    const statusSections = root.querySelectorAll("section");
+-    const statusSection = statusSections[statusSections.length - 1]; // Last section is status
++    // Assert that the status region renders the completion telemetry.
++    // dom-target.ts appends six sections in order: controls, conversations,
++    // transcript, profiles, status, notice (BLOCKER 2 correction, M12-C1T2,
++    // added the notice section last). Use data-testid="status" to select the
++    // status section explicitly instead of relying on position.
++    const statusSection = root.querySelector('[data-testid="status"]');
+     const statusText = statusSection?.textContent ?? "";
+     expect(statusText).toContain("Complete");
+     expect(statusText).toContain("tok/s");
+diff --git a/test/web/ui/dom-target.test.ts b/test/web/ui/dom-target.test.ts
+index e1db5fa..7c1483b 100644
+--- a/test/web/ui/dom-target.test.ts
++++ b/test/web/ui/dom-target.test.ts
+@@ -9,7 +9,7 @@ import type { Conversation } from "../../../web/src/conversation-store";
+ import { createMemoryStorage } from "../../../web/src/storage-port";
+ import { createConversationStore } from "../../../web/src/conversation-store";
+ import { mount } from "../../../web/src/ui/mount";
+-import { HarnessStreamError } from "../../../web/src/api-client";
++import { HarnessApiError, HarnessStreamError } from "../../../web/src/api-client";
+ import type { GenerationHandlers, SendResult, ResumeResult } from "../../../web/src/session-coordinator";
+ import type { SessionCoordinator } from "../../../web/src/session-coordinator";
+ import type { UiState } from "../../../web/src/ui/view-model";
+@@ -100,12 +100,13 @@ function createTestViewModel(overrides: Partial<ViewModel> = {}): ViewModel {
+     profiles: [],
+     selectedProfileId: null,
+     generation: { kind: "idle" },
++    notice: null,
+     ...overrides,
+   };
+ }
+ 
+-// createDomTarget() builds five sections onto root, in this order: controls,
+-// conversations, transcript, profiles, status. Only the conversations,
++// createDomTarget() builds six sections onto root, in this order: controls,
++// conversations, transcript, profiles, status, notice. Only the conversations,
+ // transcript and profiles sections contain a <ul>, so the transcript <ul> is
+ // the second <ul> in document order. These helpers read the REAL rendered
+ // DOM (not the view model handed to paint(), and not the store), so tests
+@@ -162,6 +163,7 @@ describe("createDomTarget", () => {
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: () => {},
+       };
+ 
+       target.attach({ actions, controller });
+@@ -195,17 +197,19 @@ describe("createDomTarget", () => {
+       expect(promptInput.value).toBe("");
+     });
+ 
+-    it("send with empty string prompt makes no action call and leaves input unchanged", async () => {
++    it("send with empty string prompt makes no action call, leaves input unchanged, and says why via setNotice", async () => {
+       const { win, doc, root } = createTestWindow();
+       const target = createDomTarget(root as any);
+       const { actions, calls } = createRecordingActions();
+ 
++      const notices: (string | null)[] = [];
+       const controller: DomController = {
+         render: () => {},
+         select: () => {},
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: (notice) => notices.push(notice),
+       };
+ 
+       target.attach({ actions, controller });
+@@ -223,19 +227,24 @@ describe("createDomTarget", () => {
+ 
+       expect(calls.length).toBe(0);
+       expect(promptInput.value).toBe("");
++      expect(notices).toHaveLength(1);
++      expect(notices[0]).not.toBeNull();
++      expect((notices[0] ?? "").toLowerCase()).toContain("prompt");
+     });
+ 
+-    it("send with whitespace-only prompt makes no action call and leaves input unchanged", async () => {
++    it("send with whitespace-only prompt makes no action call, leaves input unchanged, and says why via setNotice", async () => {
+       const { win, doc, root } = createTestWindow();
+       const target = createDomTarget(root as any);
+       const { actions, calls } = createRecordingActions();
+ 
++      const notices: (string | null)[] = [];
+       const controller: DomController = {
+         render: () => {},
+         select: () => {},
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: (notice) => notices.push(notice),
+       };
+ 
+       target.attach({ actions, controller });
+@@ -253,19 +262,23 @@ describe("createDomTarget", () => {
+ 
+       expect(calls.length).toBe(0);
+       expect(promptInput.value).toBe("   ");
++      expect(notices).toHaveLength(1);
++      expect((notices[0] ?? "").toLowerCase()).toContain("prompt");
+     });
+ 
+-    it("send with no selected conversation makes no action call", async () => {
++    it("send with no selected conversation makes no action call and says why via setNotice", async () => {
+       const { win, doc, root } = createTestWindow();
+       const target = createDomTarget(root as any);
+       const { actions, calls } = createRecordingActions();
+ 
++      const notices: (string | null)[] = [];
+       const controller: DomController = {
+         render: () => {},
+         select: () => {},
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: (notice) => notices.push(notice),
+       };
+ 
+       target.attach({ actions, controller });
+@@ -282,6 +295,8 @@ describe("createDomTarget", () => {
+       sendBtn.dispatchEvent(new win.Event("click"));
+ 
+       expect(calls.length).toBe(0);
++      expect(notices).toHaveLength(1);
++      expect((notices[0] ?? "").toLowerCase()).toContain("conversation");
+     });
+ 
+     it("cancel button dispatches actions.cancel with selected conversation id", async () => {
+@@ -295,6 +310,7 @@ describe("createDomTarget", () => {
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: () => {},
+       };
+ 
+       target.attach({ actions, controller });
+@@ -312,17 +328,19 @@ describe("createDomTarget", () => {
+       expect(calls[0]?.args[0]).toBe("conv-1");
+     });
+ 
+-    it("cancel with no selected conversation makes no action call", async () => {
++    it("cancel with no selected conversation makes no action call and says why via setNotice", async () => {
+       const { win, doc, root } = createTestWindow();
+       const target = createDomTarget(root as any);
+       const { actions, calls } = createRecordingActions();
+ 
++      const notices: (string | null)[] = [];
+       const controller: DomController = {
+         render: () => {},
+         select: () => {},
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: (notice) => notices.push(notice),
+       };
+ 
+       target.attach({ actions, controller });
+@@ -334,6 +352,8 @@ describe("createDomTarget", () => {
+       cancelBtn.dispatchEvent(new win.Event("click"));
+ 
+       expect(calls.length).toBe(0);
++      expect(notices).toHaveLength(1);
++      expect((notices[0] ?? "").toLowerCase()).toContain("conversation");
+     });
+ 
+     it("profile-select change dispatches actions.chooseProfile", async () => {
+@@ -347,6 +367,7 @@ describe("createDomTarget", () => {
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: () => {},
+       };
+ 
+       target.attach({ actions, controller });
+@@ -371,17 +392,19 @@ describe("createDomTarget", () => {
+       expect(calls[0]?.args[1]).toBe("prof-1");
+     });
+ 
+-    it("profile-select change with no selected conversation makes no action call", async () => {
++    it("profile-select change with no selected conversation makes no action call and says why via setNotice", async () => {
+       const { win, doc, root } = createTestWindow();
+       const target = createDomTarget(root as any);
+       const { actions, calls } = createRecordingActions();
+ 
++      const notices: (string | null)[] = [];
+       const controller: DomController = {
+         render: () => {},
+         select: () => {},
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: (notice) => notices.push(notice),
+       };
+ 
+       target.attach({ actions, controller });
+@@ -398,19 +421,23 @@ describe("createDomTarget", () => {
+       profileSelect.dispatchEvent(new win.Event("change"));
+ 
+       expect(calls.length).toBe(0);
++      expect(notices).toHaveLength(1);
++      expect((notices[0] ?? "").toLowerCase()).toContain("conversation");
+     });
+ 
+-    it("create-conversation button with empty profile selector makes no action call", async () => {
++    it("create-conversation button with empty profile selector makes no action call and points at re-pairing via setNotice", async () => {
+       const { win, doc, root } = createTestWindow();
+       const target = createDomTarget(root as any);
+       const { actions, calls } = createRecordingActions();
+ 
++      const notices: (string | null)[] = [];
+       const controller: DomController = {
+         render: () => {},
+         select: () => {},
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: (notice) => notices.push(notice),
+       };
+ 
+       target.attach({ actions, controller });
+@@ -422,6 +449,13 @@ describe("createDomTarget", () => {
+       createBtn.dispatchEvent(new win.Event("click"));
+ 
+       expect(calls.length).toBe(0);
++      expect(notices).toHaveLength(1);
++      const message = (notices[0] ?? "").toLowerCase();
++      // This is the unpaired case the human hit: an empty profile list
++      // signals the phone is not paired, so the message must point at
++      // re-pairing rather than just "pick a profile".
++      expect(message).toContain("pair");
++      expect(message).toContain("qr");
+     });
+ 
+     it("create-conversation button dispatches actions.createConversation with profile id", async () => {
+@@ -435,6 +469,7 @@ describe("createDomTarget", () => {
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: () => {},
+       };
+ 
+       target.attach({ actions, controller });
+@@ -469,6 +504,7 @@ describe("createDomTarget", () => {
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: () => {},
+       };
+ 
+       target.attach({ actions, controller });
+@@ -503,6 +539,7 @@ describe("createDomTarget", () => {
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: () => {},
+       };
+ 
+       target.attach({ actions, controller });
+@@ -537,6 +574,7 @@ describe("createDomTarget", () => {
+         setGeneration: () => {},
+         setStreamingText: () => {},
+         setProfiles: () => {},
++        setNotice: () => {},
+       };
+ 
+       target.attach({ actions, controller });
+@@ -1047,6 +1085,262 @@ describe("createDomTarget", () => {
+     });
+   });
+ 
++  // M12 cycle-1 BLOCKER 1 corrections: creating and deleting a conversation
++  // must repaint the real, mounted UI on their own -- no caller may compensate
++  // by invoking render()/select() by hand. These tests use the real mount()
++  // and a real store (not a no-op recording controller), so a paint the app
++  // itself never performs shows up as a missing button, not a passing no-op.
++  describe("create/delete repaint the mounted UI without manual render()/select()", () => {
++    it("create-conversation click repaints the list, selects the new conversation, and Send works immediately with no other clicks", async () => {
++      const { win, doc, root } = createTestWindow();
++      const target = createDomTarget(root as any);
++      const storage = createMemoryStorage();
++      const store = createConversationStore(storage);
++
++      const sendCalls: { conversationId: string; prompt: string }[] = [];
++
++      const fakeCoordinator: SessionCoordinator = {
++        async createConversation(input: { profileId: string; title?: string }) {
++          return store.createConversation(input);
++        },
++        async send(conversationId: string, prompt: string, handlers?: GenerationHandlers): Promise<SendResult> {
++          sendCalls.push({ conversationId, prompt });
++          return {
++            generationId: "gen-1",
++            text: "ok",
++            status: "complete",
++            telemetry: null,
++            errorCode: null,
++            streamError: null,
++            sessionRebuilt: false,
++            replayedTurns: 0,
++          };
++        },
++        async cancel() {
++          return { status: "cancelled" };
++        },
++        async setProfile(conversationId: string, profileId: string) {
++          return store.setProfileId(conversationId, profileId);
++        },
++        async resumeIfInterrupted(): Promise<ResumeResult> {
++          return { resumed: false, generationId: null, text: "", status: null, telemetry: null, errorCode: null, streamError: null, reconciledFromSession: false, seqs: [] };
++        },
++        async listProfiles() {
++          return [{ id: "prof-1", role: "assistant", quality: "high", latency_class: "fast", label: "Profile 1" }];
++        },
++      };
++
++      const controller = mount({ target, coordinator: fakeCoordinator, store });
++      target.attach({ actions: controller.actions, controller });
++
++      controller.setProfiles([{ id: "prof-1", role: "assistant", quality: "high", latency_class: "fast", label: "Profile 1" }]);
++
++      const profileSelect = root.querySelector('[data-testid="profile-select"]') as any;
++      profileSelect.value = "prof-1";
++
++      // Before creating: no open-conversation button exists at all.
++      expect(root.querySelectorAll('[data-testid="open-conversation"]').length).toBe(0);
++
++      const createBtn = root.querySelector('[data-testid="create-conversation"]') as any;
++      createBtn.dispatchEvent(new win.Event("click"));
++
++      // Let the create -> render -> select promise chain settle. No caller
++      // here invokes render() or select() itself.
++      await new Promise((resolve) => setTimeout(resolve, 0));
++
++      const openBtns = root.querySelectorAll('[data-testid="open-conversation"]') as any;
++      expect(openBtns.length).toBe(1);
++      expect((openBtns[0] as any).textContent).toContain("▸");
++      expect(controller.getState().selectedConversationId).not.toBeNull();
++
++      // Immediately after, with no click on open-conversation, Send must work.
++      const promptInput = root.querySelector('[data-testid="prompt-input"]') as any;
++      promptInput.value = "hello";
++      const sendBtn = root.querySelector('[data-testid="send"]') as any;
++      sendBtn.dispatchEvent(new win.Event("click"));
++
++      const selectedId = controller.getState().selectedConversationId;
++      expect(selectedId).not.toBeNull();
++      expect(sendCalls.length).toBe(1);
++      expect(sendCalls[0]?.conversationId).toBe(selectedId as string);
++      expect(sendCalls[0]?.prompt).toBe("hello");
++    });
++
++    it("delete-conversation click on the selected conversation clears selection and repaints the list", () => {
++      const { win, doc, root } = createTestWindow();
++      const target = createDomTarget(root as any);
++      const storage = createMemoryStorage();
++      const store = createConversationStore(storage);
++
++      const conv1 = store.createConversation({ profileId: "prof-1" });
++      const conv2 = store.createConversation({ profileId: "prof-1" });
++
++      const fakeCoordinator: SessionCoordinator = {
++        async createConversation(input: { profileId: string; title?: string }) {
++          return store.createConversation(input);
++        },
++        async send(): Promise<SendResult> {
++          throw new Error("not used in this test");
++        },
++        async cancel() {
++          return { status: "cancelled" };
++        },
++        async setProfile(conversationId: string, profileId: string) {
++          return store.setProfileId(conversationId, profileId);
++        },
++        async resumeIfInterrupted(): Promise<ResumeResult> {
++          return { resumed: false, generationId: null, text: "", status: null, telemetry: null, errorCode: null, streamError: null, reconciledFromSession: false, seqs: [] };
++        },
++        async listProfiles() {
++          return [];
++        },
++      };
++
++      const controller = mount({
++        target,
++        coordinator: fakeCoordinator,
++        store,
++        initialState: { selectedConversationId: conv1.id },
++      });
++      target.attach({ actions: controller.actions, controller });
++
++      expect(root.querySelectorAll('[data-testid="open-conversation"]').length).toBe(2);
++
++      const deleteBtn = root.querySelector(
++        `[data-conversation-id="${conv1.id}"][data-testid="delete-conversation"]`
++      ) as any;
++      expect(deleteBtn).not.toBeNull();
++      deleteBtn.dispatchEvent(new win.Event("click"));
++
++      // deleteConversation is synchronous, and the dom-target handler calls
++      // select()/render() synchronously too -- no wait needed.
++      expect(controller.getState().selectedConversationId).toBeNull();
++
++      const remainingOpenBtns = root.querySelectorAll('[data-testid="open-conversation"]') as any;
++      expect(remainingOpenBtns.length).toBe(1);
++      expect((remainingOpenBtns[0] as any).getAttribute("data-conversation-id")).toBe(conv2.id);
++
++      const remainingDeleteBtns = root.querySelectorAll('[data-testid="delete-conversation"]') as any;
++      expect(remainingDeleteBtns.length).toBe(1);
++    });
++  });
++
++  describe("BLOCKER 2 correction: failures and refusals reach the notice region", () => {
++    it("a rejected send puts a guidance-derived message into [data-testid=\"notice\"] and clears stale streaming text", async () => {
++      const { win, doc, root } = createTestWindow();
++      const target = createDomTarget(root as any);
++      const storage = createMemoryStorage();
++      const store = createConversationStore(storage);
++      const conv = store.createConversation({ profileId: "prof-1" });
++
++      const fakeCoordinator: SessionCoordinator = {
++        async createConversation(input: { profileId: string; title?: string }) {
++          return store.createConversation(input);
++        },
++        async send(_conversationId: string, _prompt: string, handlers?: GenerationHandlers): Promise<SendResult> {
++          // Emit a delta before failing, so the test can prove the stale
++          // streaming text is cleared once the rejection is handled.
++          handlers?.onDelta?.("partial reply");
++          throw new HarnessApiError("unauthorized", 401, null);
++        },
++        async cancel() {
++          return { status: "cancelled" };
++        },
++        async setProfile(conversationId: string, profileId: string) {
++          return store.setProfileId(conversationId, profileId);
++        },
++        async resumeIfInterrupted(): Promise<ResumeResult> {
++          return { resumed: false, generationId: null, text: "", status: null, telemetry: null, errorCode: null, streamError: null, reconciledFromSession: false, seqs: [] };
++        },
++        async listProfiles() {
++          return [];
++        },
++      };
++
++      const controller = mount({
++        target,
++        coordinator: fakeCoordinator,
++        store,
++        initialState: { selectedConversationId: conv.id },
++      });
++      target.attach({ actions: controller.actions, controller });
++
++      const promptInput = root.querySelector('[data-testid="prompt-input"]') as any;
++      promptInput.value = "hello";
++      const sendBtn = root.querySelector('[data-testid="send"]') as any;
++      sendBtn.dispatchEvent(new win.Event("click"));
++
++      await new Promise((resolve) => setTimeout(resolve, 0));
++
++      expect(controller.getState().streamingText).toBe("");
++
++      const noticeEl = root.querySelector('[data-testid="notice"]') as any;
++      expect(noticeEl).not.toBeNull();
++      const noticeText = (noticeEl?.textContent ?? "") as string;
++      expect(noticeText).toContain("unauthorized");
++      expect(noticeText.toLowerCase()).toContain("pair");
++      expect(noticeText.toLowerCase()).toContain("scan");
++    });
++
++    it("a rejected create-conversation puts a guidance-derived message into [data-testid=\"notice\"]", async () => {
++      const { win, doc, root } = createTestWindow();
++      const target = createDomTarget(root as any);
++      const storage = createMemoryStorage();
++      const store = createConversationStore(storage);
++
++      const fakeCoordinator: SessionCoordinator = {
++        async createConversation(_input: { profileId: string; title?: string }): Promise<Conversation> {
++          throw new HarnessApiError("internal_error", 500, null);
++        },
++        async send(): Promise<SendResult> {
++          throw new Error("not used in this test");
++        },
++        async cancel() {
++          return { status: "cancelled" };
++        },
++        async setProfile(conversationId: string, profileId: string) {
++          return store.setProfileId(conversationId, profileId);
++        },
++        async resumeIfInterrupted(): Promise<ResumeResult> {
++          return { resumed: false, generationId: null, text: "", status: null, telemetry: null, errorCode: null, streamError: null, reconciledFromSession: false, seqs: [] };
++        },
++        async listProfiles() {
++          return [{ id: "prof-1", role: "assistant", quality: "high", latency_class: "fast", label: "Profile 1" }];
++        },
++      };
++
++      const controller = mount({ target, coordinator: fakeCoordinator, store });
++      target.attach({ actions: controller.actions, controller });
++      controller.setProfiles([{ id: "prof-1", role: "assistant", quality: "high", latency_class: "fast", label: "Profile 1" }]);
++
++      const profileSelect = root.querySelector('[data-testid="profile-select"]') as any;
++      profileSelect.value = "prof-1";
++
++      const createBtn = root.querySelector('[data-testid="create-conversation"]') as any;
++      createBtn.dispatchEvent(new win.Event("click"));
++
++      await new Promise((resolve) => setTimeout(resolve, 0));
++
++      const noticeEl = root.querySelector('[data-testid="notice"]') as any;
++      expect(noticeEl).not.toBeNull();
++      const noticeText = (noticeEl?.textContent ?? "") as string;
++      expect(noticeText).toContain("internal_error");
++    });
++
++    it("paint() renders view.notice into the notice section, and an empty notice renders as empty text", () => {
++      const { win, doc, root } = createTestWindow();
++      const target = createDomTarget(root as any);
++
++      target.paint(createTestViewModel({ notice: "Something went wrong." }));
++      const noticeEl = root.querySelector('[data-testid="notice"]') as any;
++      expect(noticeEl).not.toBeNull();
++      expect(noticeEl?.textContent).toBe("Something went wrong.");
++
++      target.paint(createTestViewModel({ notice: null }));
++      expect(noticeEl?.textContent).toBe("");
++    });
++  });
++
+   it("render button renders prompt input and send control", () => {
+     const { win, doc, root } = createTestWindow();
+     const target = createDomTarget(root as any);
+diff --git a/test/web/ui/mount.test.ts b/test/web/ui/mount.test.ts
+index 4b23fd2..abb2c2e 100644
+--- a/test/web/ui/mount.test.ts
++++ b/test/web/ui/mount.test.ts
+@@ -257,6 +257,46 @@ describe("mount", () => {
+     expect(paints[1]?.profiles).toEqual([profile]);
+   });
+ 
++  it("setNotice() updates notice and paints exactly once more", () => {
++    const { target, paints } = createFakeTarget();
++    const { coordinator } = createFakeCoordinator();
++    const { store } = createFakeStore();
++    const handle = mount({ target, coordinator, store });
++
++    handle.setNotice("This device is not paired. Scan the QR code to re-pair.");
++
++    expect(paints.length).toBe(2);
++    expect(handle.getState().notice).toBe(
++      "This device is not paired. Scan the QR code to re-pair."
++    );
++    expect(paints[1]?.notice).toBe(
++      "This device is not paired. Scan the QR code to re-pair."
++    );
++
++    handle.setNotice(null);
++
++    expect(paints.length).toBe(3);
++    expect(handle.getState().notice).toBeNull();
++    expect(paints[2]?.notice).toBeNull();
++  });
++
++  it("applies initialState.notice, defaulting to null when omitted", () => {
++    const { target } = createFakeTarget();
++    const { coordinator } = createFakeCoordinator();
++    const { store } = createFakeStore();
++
++    const defaulted = mount({ target, coordinator, store });
++    expect(defaulted.getState().notice).toBeNull();
++
++    const withNotice = mount({
++      target,
++      coordinator,
++      store,
++      initialState: { notice: "carried over" },
++    });
++    expect(withNotice.getState().notice).toBe("carried over");
++  });
++
+   it("getState() returns a copy that cannot mutate the mount's internal state", () => {
+     const { target, paints } = createFakeTarget();
+     const { coordinator } = createFakeCoordinator();
+diff --git a/test/web/ui/view-model.test.ts b/test/web/ui/view-model.test.ts
+index 8c74973..b9f2f95 100644
+--- a/test/web/ui/view-model.test.ts
++++ b/test/web/ui/view-model.test.ts
+@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test";
+ import {
+   buildViewModel,
+   toTelemetryDisplay,
++  describeError,
+   type UiState,
+   type TelemetryDisplay,
+   type GenerationDisplay,
+@@ -9,6 +10,7 @@ import {
+   type TranscriptEntry,
+   type ViewModel,
+ } from "../../../web/src/ui/view-model";
++import { HarnessApiError, HarnessStreamError } from "../../../web/src/api-client";
+ import type { Profile } from "../../../web/src/api-client";
+ import type { Conversation, Turn } from "../../../web/src/conversation-store";
+ import type { Telemetry } from "../../../web/src/sse-reader";
+@@ -85,6 +87,7 @@ describe("view-model", () => {
+         profiles: [],
+         generation: { kind: "idle" },
+         streamingText: "",
++        notice: null,
+       };
+       expect(state.selectedConversationId).toBeNull();
+     });
+@@ -96,6 +99,7 @@ describe("view-model", () => {
+         profiles: [],
+         selectedProfileId: null,
+         generation: { kind: "idle" },
++        notice: null,
+       };
+       expect(model.conversations.length).toBe(0);
+     });
+@@ -109,6 +113,7 @@ describe("view-model", () => {
+         profiles: [],
+         generation: { kind: "idle" },
+         streamingText: "",
++        notice: null,
+       };
+ 
+       const model = buildViewModel(state);
+@@ -161,6 +166,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -214,6 +220,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -258,6 +265,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -300,6 +308,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -327,6 +336,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -354,6 +364,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -392,6 +403,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -426,6 +438,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -468,6 +481,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -530,6 +544,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -573,6 +588,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "streaming" },
+           streamingText: "Partial response",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -619,6 +635,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "streaming" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -662,6 +679,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "streaming" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -689,6 +707,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "streaming" },
+           streamingText: "Streaming text",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -721,6 +740,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "streaming" },
+           streamingText: "From streaming",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -739,6 +759,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -753,6 +774,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "queued", position: 1 },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -767,6 +789,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "queued", position: 5 },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -781,6 +804,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "model-loading" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -795,6 +819,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "streaming" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -815,6 +840,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "complete", telemetry },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -829,6 +855,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "cancelled" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -847,6 +874,7 @@ describe("view-model", () => {
+             message: "Test error message",
+           },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -884,6 +912,7 @@ describe("view-model", () => {
+           profiles,
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -911,6 +940,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -938,6 +968,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -965,6 +996,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "",
++          notice: null,
+         };
+ 
+         const model = buildViewModel(state);
+@@ -1001,6 +1033,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "test",
++          notice: null,
+         };
+ 
+         const stateJson = JSON.stringify(state);
+@@ -1030,6 +1063,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "streaming" },
+           streamingText: "test",
++          notice: null,
+         };
+ 
+         const model1 = buildViewModel(state);
+@@ -1065,6 +1099,7 @@ describe("view-model", () => {
+           profiles: [],
+           generation: { kind: "idle" },
+           streamingText: "test",
++          notice: null,
+         };
+ 
+         function deepFreeze(obj: unknown): unknown {
+@@ -1158,4 +1193,48 @@ describe("view-model", () => {
+       expect(result.contextLimit).toBe(4096);
+     });
+   });
++
++  describe("describeError", () => {
++    it("builds a message from a real HarnessApiError('unauthorized') that explicitly names pairing and prompts to re-pair", () => {
++      const error = new HarnessApiError("unauthorized", 401, null);
++
++      const message = describeError(error);
++
++      expect(message).toContain("unauthorized");
++      expect(message.toLowerCase()).toContain("pair");
++      expect(message.toLowerCase()).toContain("scan");
++      expect(message.toLowerCase()).toContain("qr");
++    });
++
++    it("builds a message from a real HarnessStreamError using its guidance, including the error code", () => {
++      const error = new HarnessStreamError("inference_failed", "gen-1");
++
++      const message = describeError(error);
++
++      expect(message).toContain("inference_failed");
++      expect(message).toContain(error.guidance.title);
++      expect(message).toContain(error.guidance.detail);
++    });
++
++    it("falls back to a readable message for a non-Error value instead of '[object Object]' or an empty string", () => {
++      const message = describeError({ unexpected: "shape" });
++
++      expect(message).not.toBe("[object Object]");
++      expect(message).not.toBe("");
++      expect(message.length).toBeGreaterThan(0);
++    });
++
++    it("falls back to a readable message for a thrown non-object primitive", () => {
++      const message = describeError(42);
++
++      expect(message).not.toBe("");
++      expect(message.length).toBeGreaterThan(0);
++    });
++
++    it("uses a plain Error's message when there is no guidance to read", () => {
++      const message = describeError(new Error("boom"));
++
++      expect(message).toBe("boom");
++    });
++  });
+ });
+diff --git a/web/public/index.html b/web/public/index.html
+index bf24f92..ddb0ec1 100644
+--- a/web/public/index.html
++++ b/web/public/index.html
+@@ -11,7 +11,10 @@
+ 		body {
+ 			font-family: system-ui, -apple-system, sans-serif;
+ 			margin: 0;
+-			padding: 1rem;
++			padding-top: max(1rem, env(safe-area-inset-top));
++			padding-right: max(1rem, env(safe-area-inset-right));
++			padding-bottom: max(1rem, env(safe-area-inset-bottom));
++			padding-left: max(1rem, env(safe-area-inset-left));
+ 		}
+ 		main {
+ 			max-width: 100%;
+diff --git a/web/src/main.ts b/web/src/main.ts
+index 671fcd6..570b96e 100644
+--- a/web/src/main.ts
++++ b/web/src/main.ts
+@@ -14,7 +14,7 @@
+ import { mount, type MountHandle } from "./ui/mount";
+ import { createDomTarget, type DomTarget } from "./ui/dom-target";
+ import { createActions } from "./ui/actions";
+-import { buildViewModel, toTelemetryDisplay } from "./ui/view-model";
++import { buildViewModel, toTelemetryDisplay, describeError } from "./ui/view-model";
+ import { createLocalStorageStorage } from "./storage-port";
+ import { createConversationStore } from "./conversation-store";
+ import {
+@@ -99,11 +99,13 @@ export function bootstrap(root: HTMLElement, deps?: BootstrapDeps): MountHandle
+   }
+ 
+   // Populate the profile selector. Fire-and-forget: a failure here must never
+-  // stop the app mounting, and error surfacing is not this milestone's scope.
++  // stop the app mounting. The harness returns 401 to an unauthenticated
++  // request, so an unpaired or no-longer-authorised phone hits this catch
++  // and must be told so via the notice region (BLOCKER 2, M12-C1T2).
+   coordinator
+     .listProfiles()
+     .then((profiles) => handle.setProfiles(profiles))
+-    .catch(() => {});
++    .catch((error) => handle.setNotice(describeError(error)));
+ 
+   return handle;
+ }
+diff --git a/web/src/ui/dom-target.ts b/web/src/ui/dom-target.ts
+index 51fa923..cd56ef3 100644
+--- a/web/src/ui/dom-target.ts
++++ b/web/src/ui/dom-target.ts
+@@ -8,7 +8,7 @@ import type { UiActions } from "./actions";
+ import type { Profile } from "../api-client";
+ import type { GenerationHandlers } from "../session-coordinator";
+ import type { HarnessStreamError } from "../api-client";
+-import { toTelemetryDisplay } from "./view-model";
++import { toTelemetryDisplay, describeError } from "./view-model";
+ 
+ export interface DomController {
+   render(): void;
+@@ -16,6 +16,7 @@ export interface DomController {
+   setGeneration(generation: GenerationDisplay): void;
+   setStreamingText(text: string): void;
+   setProfiles(profiles: readonly Profile[]): void;
++  setNotice(notice: string | null): void;
+ }
+ 
+ export interface DomTarget extends RenderTarget {
+@@ -68,13 +69,22 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+   profilesSection.appendChild(profilesList);
+ 
+   const statusSection = doc.createElement("section");
++  statusSection.setAttribute("data-testid", "status");
++
++  // Surfaces failures and guard-clause refusals (BLOCKER 2 correction,
++  // M12-C1T2). Appended LAST -- several tests select sections/uls
++  // positionally, and adding a section at the end with no <ul> inside it
++  // leaves every existing index valid. Do not reorder or insert elsewhere.
++  const noticeSection = doc.createElement("section");
++  noticeSection.setAttribute("data-testid", "notice");
+ 
+   root.replaceChildren(
+     controlsSection,
+     conversationsSection,
+     transcriptSection,
+     profilesSection,
+-    statusSection
++    statusSection,
++    noticeSection
+   );
+ 
+   // Create and add controls to controlsSection
+@@ -86,13 +96,20 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+   sendBtn.textContent = "Send";
+   sendBtn.addEventListener("click", () => {
+     if (!deps) return;
+-    if (!selectedConversationId) return;
++    if (!selectedConversationId) {
++      deps.controller.setNotice("Select a conversation before sending.");
++      return;
++    }
+ 
+     const trimmedText = promptInput.value.trim();
+-    if (trimmedText === "") return;
++    if (trimmedText === "") {
++      deps.controller.setNotice("Type a prompt before sending.");
++      return;
++    }
+ 
+     // Capture deps once to avoid null narrowing issues in handlers
+     const d = deps;
++    d.controller.setNotice(null);
+ 
+     // Create handlers for streaming updates
+     let streamed = "";
+@@ -140,7 +157,10 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+         d.controller.setStreamingText("");
+         d.controller.render();
+       })
+-      .catch(() => {});
++      .catch((error) => {
++        d.controller.setStreamingText("");
++        d.controller.setNotice(describeError(error));
++      });
+     promptInput.value = "";
+   });
+ 
+@@ -149,7 +169,11 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+   cancelBtn.textContent = "Cancel";
+   cancelBtn.addEventListener("click", () => {
+     if (!deps) return;
+-    if (!selectedConversationId) return;
++    if (!selectedConversationId) {
++      deps.controller.setNotice("Select a conversation before cancelling.");
++      return;
++    }
++    deps.controller.setNotice(null);
+     deps.actions.cancel(selectedConversationId);
+   });
+ 
+@@ -158,9 +182,13 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+ 
+   profileSelect.addEventListener("change", () => {
+     if (!deps) return;
+-    if (!selectedConversationId) return;
++    if (!selectedConversationId) {
++      deps.controller.setNotice("Select a conversation before changing its profile.");
++      return;
++    }
+     const selectedProfileId = profileSelect.value;
+     if (selectedProfileId) {
++      deps.controller.setNotice(null);
+       deps.actions.chooseProfile(selectedConversationId, selectedProfileId);
+     }
+   });
+@@ -171,8 +199,31 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+   createConversationBtn.addEventListener("click", () => {
+     if (!deps) return;
+     const selectedProfileId = profileSelect.value;
+-    if (!selectedProfileId) return;
+-    deps.actions.createConversation({ profileId: selectedProfileId });
++    if (!selectedProfileId) {
++      // This is the unpaired case (BLOCKER 2, M12-C1T2): an unpaired or
++      // no-longer-authorised phone never receives a profile list, so the
++      // selector stays empty and this guard fires. Point at pairing, not
++      // just "pick a profile".
++      deps.controller.setNotice(
++        "No profile selected, and none are available to choose from. If this " +
++          "device is not paired with your Mac's harness, or the pairing is no " +
++          "longer valid, scan the pairing QR code again to re-pair."
++      );
++      return;
++    }
++
++    // Capture deps once to avoid null narrowing issues in the handler below.
++    const d = deps;
++    d.controller.setNotice(null);
++
++    d.actions.createConversation({ profileId: selectedProfileId })
++      .then((conversation) => {
++        d.controller.render(); // reloads conversations from the store
++        d.controller.select(conversation.id); // selects the new one and repaints
++      })
++      .catch((error) => {
++        d.controller.setNotice(describeError(error));
++      });
+   });
+ 
+   controlsSection.appendChild(promptInput);
+@@ -224,7 +275,12 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+         deleteBtn.textContent = "Delete";
+         deleteBtn.addEventListener("click", () => {
+           if (!deps) return;
+-          deps.actions.deleteConversation(conversation.id);
++          const d = deps;
++          d.actions.deleteConversation(conversation.id);
++          if (selectedConversationId === conversation.id) {
++            d.controller.select(null);
++          }
++          d.controller.render();
+         });
+ 
+         item.appendChild(openBtn);
+@@ -254,6 +310,7 @@ export function createDomTarget(root: HTMLElement): DomTarget {
+       profilesList.replaceChildren(...profileItems);
+ 
+       statusSection.textContent = generationStatusText(view.generation);
++      noticeSection.textContent = view.notice ?? "";
+     },
+   };
+ }
+diff --git a/web/src/ui/mount.ts b/web/src/ui/mount.ts
+index cc3932b..23612af 100644
+--- a/web/src/ui/mount.ts
++++ b/web/src/ui/mount.ts
+@@ -21,6 +21,7 @@ export interface MountDeps {
+     profiles?: readonly Profile[];
+     generation?: GenerationDisplay;
+     streamingText?: string;
++    notice?: string | null;
+   };
+ }
+ 
+@@ -31,6 +32,7 @@ export interface MountHandle {
+   setGeneration(generation: GenerationDisplay): void;
+   setStreamingText(text: string): void;
+   setProfiles(profiles: readonly Profile[]): void;
++  setNotice(notice: string | null): void;
+   actions: UiActions;
+ }
+ 
+@@ -41,6 +43,7 @@ function copyState(state: UiState): UiState {
+     profiles: state.profiles,
+     generation: state.generation,
+     streamingText: state.streamingText,
++    notice: state.notice,
+   };
+ }
+ 
+@@ -53,6 +56,7 @@ export function mount(deps: MountDeps): MountHandle {
+     profiles: initialState?.profiles ?? [],
+     generation: initialState?.generation ?? { kind: "idle" },
+     streamingText: initialState?.streamingText ?? "",
++    notice: initialState?.notice ?? null,
+   };
+ 
+   function paint(): void {
+@@ -92,6 +96,11 @@ export function mount(deps: MountDeps): MountHandle {
+       paint();
+     },
+ 
++    setNotice(notice: string | null): void {
++      state = { ...state, notice };
++      paint();
++    },
++
+     actions: createActions(coordinator, store),
+   };
+ }
+diff --git a/web/src/ui/view-model.ts b/web/src/ui/view-model.ts
+index b0b63e3..a380cd3 100644
+--- a/web/src/ui/view-model.ts
++++ b/web/src/ui/view-model.ts
+@@ -1,6 +1,6 @@
+ import type { Conversation, Turn } from "../conversation-store";
+ import type { Telemetry } from "../sse-reader";
+-import type { Profile } from "../api-client";
++import type { Profile, ErrorGuidance } from "../api-client";
+ 
+ export interface TelemetryDisplay {
+   tokensPerSecond: number;
+@@ -39,6 +39,7 @@ export interface UiState {
+   profiles: readonly Profile[];
+   generation: GenerationDisplay;
+   streamingText: string;
++  notice: string | null;
+ }
+ 
+ export interface ViewModel {
+@@ -47,6 +48,7 @@ export interface ViewModel {
+   profiles: readonly Profile[];
+   selectedProfileId: string | null;
+   generation: GenerationDisplay;
++  notice: string | null;
+ }
+ 
+ export function toTelemetryDisplay(telemetry: Telemetry): TelemetryDisplay {
+@@ -126,5 +128,43 @@ export function buildViewModel(state: UiState): ViewModel {
+     profiles: state.profiles,
+     selectedProfileId,
+     generation: state.generation,
++    notice: state.notice,
+   };
+ }
++
++// Narrows an unknown value to ErrorGuidance -- guards against a value that
++// merely happens to have a `guidance` property without carrying the shape
++// api-client.ts's error classes attach.
++function isErrorGuidance(value: unknown): value is ErrorGuidance {
++  return (
++    typeof value === "object" &&
++    value !== null &&
++    typeof (value as ErrorGuidance).code === "string" &&
++    typeof (value as ErrorGuidance).title === "string" &&
++    typeof (value as ErrorGuidance).detail === "string"
++  );
++}
++
++// Turns any rejection reason into a message fit to show a human. Uses the
++// guidance surface built in api-client.ts (HarnessApiError, HarnessStreamError,
++// HarnessOfflineError and EmptyPromptError all carry a `.guidance`) rather than
++// inventing new copy, so the documented error-code guidance (FR9) actually
++// reaches the screen instead of being discarded.
++export function describeError(error: unknown): string {
++  if (typeof error === "object" && error !== null && "guidance" in error) {
++    const guidance = (error as { guidance: unknown }).guidance;
++    if (isErrorGuidance(guidance)) {
++      return `${guidance.title} (${guidance.code}): ${guidance.detail}`;
++    }
++  }
++
++  if (error instanceof Error && error.message.length > 0) {
++    return error.message;
++  }
++
++  if (typeof error === "string" && error.length > 0) {
++    return error;
++  }
++
++  return "An unexpected error occurred. Please try again.";
++}
